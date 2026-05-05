@@ -1,0 +1,14 @@
+.build/
+.swiftpm/xcode/
+icon.iconset/
+NotchClaudeApp.app/
+NotchClaude.dmg
+NotchDMG/
+NotchClaude/
+AppIcon.icns
+.DS_Store
+*.xcuserdata
+*.xcuserstate
+.claude/
+record/
+record/
