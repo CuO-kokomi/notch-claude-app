@@ -7,6 +7,9 @@ final class NotchPanelController: NSObject {
     private var panel: NSPanel!
     private var rootView: NotchPanelView!
     private var isExpanded = false
+    private var flushToTop: Bool {
+        UserDefaults.standard.bool(forKey: "flushToTop")
+    }
 
     override init() {
         super.init()
@@ -59,6 +62,10 @@ final class NotchPanelController: NSObject {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "重置 Claude 状态", action: #selector(resetClaudeStatus), keyEquivalent: ""))
         menu.items.last?.target = self
+        let flushItem = NSMenuItem(title: "贴顶显示", action: #selector(toggleFlushToTop), keyEquivalent: "")
+        flushItem.target = self
+        flushItem.state = flushToTop ? .on : .off
+        menu.addItem(flushItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出灵动岛", action: #selector(quitApp), keyEquivalent: "q"))
         menu.items.last?.target = self
@@ -69,6 +76,12 @@ final class NotchPanelController: NSObject {
         let statusURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude-code-notch/status.json")
         try? FileManager.default.removeItem(at: statusURL)
+    }
+
+    @objc private func toggleFlushToTop() {
+        UserDefaults.standard.set(!flushToTop, forKey: "flushToTop")
+        position(size: isExpanded ? expandedSize : collapsedSize)
+        (panel.contentView as? NotchHostingView)?.menu = contextMenu()
     }
 
     @objc private func quitApp() {
@@ -92,7 +105,7 @@ final class NotchPanelController: NSObject {
         let screen = screenForPanel()
         let frame = screen.frame
         let x = frame.midX - size.width / 2
-        let y = frame.maxY - size.height - 9
+        let y = frame.maxY - size.height - (flushToTop ? -7 : 9)
         return NSRect(x: x, y: y, width: size.width, height: size.height)
     }
 

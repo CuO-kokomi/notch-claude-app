@@ -71,7 +71,7 @@ struct TimerWidget: View {
     @ObservedObject var timerModel: TimerViewModel
 
     var body: some View {
-        WidgetCard(title: "计时器") {
+        WidgetCard(title: "计时器", titleAlignment: .trailing) {
             VStack(spacing: 6) {
                 HStack(spacing: 4) {
                     QuickTimerButton(title: "正计") { timerModel.setCountUp() }
@@ -241,7 +241,7 @@ struct SystemStatsWidget: View {
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 2)
 
     var body: some View {
-        WidgetCard(title: "系统") {
+        WidgetCard(title: "系统", titleAlignment: .trailing) {
             LazyVGrid(columns: columns, spacing: 6) {
                 SystemMetricTile(systemName: "cpu", title: "CPU", value: systemStats.cpuText)
                 SystemMetricTile(systemName: "memorychip", title: "内存", value: systemStats.memoryText)
@@ -282,6 +282,7 @@ private struct SystemMetricTile: View {
 
 struct WidgetCard<Content: View>: View {
     let title: String
+    var titleAlignment: Alignment = .leading
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -289,6 +290,7 @@ struct WidgetCard<Content: View>: View {
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.56))
+                .frame(maxWidth: .infinity, alignment: titleAlignment)
             content
             Spacer(minLength: 0)
         }

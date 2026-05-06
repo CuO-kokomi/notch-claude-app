@@ -6,15 +6,24 @@ struct NotchPanelView: View {
     @StateObject private var claudeStatus = ClaudeStatusProvider()
     @StateObject private var timerModel = TimerViewModel()
     @StateObject private var systemStats = SystemStatsProvider()
+    @AppStorage("flushToTop") private var flushToTop = false
 
     let onExpandedChanged: (Bool) -> Void
 
+    private var usesSquareTopCorners: Bool {
+        flushToTop && !isExpanded
+    }
+
+    private var panelShape: PanelShape {
+        PanelShape(squareTopCorners: usesSquareTopCorners, cornerRadius: isExpanded ? 34 : 21)
+    }
+
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: isExpanded ? 34 : 21, style: .continuous)
+            panelShape
                 .fill(.black.opacity(0.86))
                 .overlay(
-                    RoundedRectangle(cornerRadius: isExpanded ? 34 : 21, style: .continuous)
+                    panelShape
                         .stroke(.white.opacity(0.10), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.35), radius: 22, y: 10)
@@ -27,7 +36,7 @@ struct NotchPanelView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: isExpanded ? 34 : 21, style: .continuous))
+        .clipShape(panelShape)
         // 裁剪外层圆角，避免展开内容轻微溢出破坏灵动岛轮廓。
         .padding(1)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -35,6 +44,7 @@ struct NotchPanelView: View {
             hovering ? expand() : scheduleCollapse()
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isExpanded)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: flushToTop)
     }
 
     private var collapsedContent: some View {
@@ -99,6 +109,42 @@ struct NotchPanelView: View {
         }
         collapseTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: task)
+    }
+}
+
+private struct PanelShape: Shape {
+    let squareTopCorners: Bool
+    let cornerRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        if squareTopCorners {
+            return SquareTopPanelShape(bottomRadius: cornerRadius).path(in: rect)
+        }
+        return RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).path(in: rect)
+    }
+}
+
+private struct SquareTopPanelShape: Shape {
+    let bottomRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let bottomRadius = min(bottomRadius, rect.height / 2)
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - bottomRadius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - bottomRadius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + bottomRadius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - bottomRadius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.closeSubpath()
+        return path
     }
 }
 
