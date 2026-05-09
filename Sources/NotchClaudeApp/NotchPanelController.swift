@@ -3,7 +3,11 @@ import SwiftUI
 
 final class NotchPanelController: NSObject {
     private let collapsedSize = NSSize(width: 260, height: 42)
-    private let expandedSize = NSSize(width: 720, height: 188)
+    private var expandedSize: NSSize {
+        NSSize(width: expandedWidth, height: 188)
+    }
+    private var expandedWidth: CGFloat = 720
+    private var isInAddMode = false
     private var panel: NSPanel!
     private var rootView: NotchPanelView!
     private var isExpanded = false
@@ -11,11 +15,24 @@ final class NotchPanelController: NSObject {
         UserDefaults.standard.bool(forKey: "flushToTop")
     }
 
+    private static let widgetUnitWidth: CGFloat = 170
+    private static let horizontalPadding: CGFloat = 40
+
     override init() {
         super.init()
-        rootView = NotchPanelView(onExpandedChanged: { [weak self] isExpanded in
-            self?.resize(expanded: isExpanded)
-        })
+        let widgetCount = UserDefaults.standard.stringArray(forKey: "activeWidgetIDs")?.count ?? 4
+        expandedWidth = Self.calculateWidth(for: widgetCount)
+        rootView = NotchPanelView(
+            onExpandedChanged: { [weak self] isExpanded in
+                self?.resize(expanded: isExpanded)
+            },
+            onWidgetCountChanged: { [weak self] count in
+                self?.updateExpandedWidth(for: count)
+            },
+            onAddModeChanged: { [weak self] inAddMode in
+                self?.handleAddModeChange(inAddMode)
+            }
+        )
         createPanel()
         NotificationCenter.default.addObserver(
             self,
@@ -116,5 +133,32 @@ final class NotchPanelController: NSObject {
 
     @objc private func screenParametersChanged() {
         position(size: isExpanded ? expandedSize : collapsedSize)
+    }
+
+    private func updateExpandedWidth(for count: Int) {
+        guard !isInAddMode else { return }
+        let newWidth = Self.calculateWidth(for: count)
+        guard newWidth != expandedWidth else { return }
+        expandedWidth = newWidth
+        if isExpanded {
+            let frame = frameFor(size: expandedSize)
+            panel.setFrame(frame, display: true, animate: true)
+        }
+    }
+
+    private func handleAddModeChange(_ inAddMode: Bool) {
+        isInAddMode = inAddMode
+        let targetWidth = inAddMode ? Self.calculateWidth(for: 3) : Self.calculateWidth(for: UserDefaults.standard.stringArray(forKey: "activeWidgetIDs")?.count ?? 4)
+        guard targetWidth != expandedWidth else { return }
+        expandedWidth = targetWidth
+        if isExpanded {
+            let frame = frameFor(size: expandedSize)
+            panel.setFrame(frame, display: true, animate: true)
+        }
+    }
+
+    private static func calculateWidth(for widgetCount: Int) -> CGFloat {
+        let count = CGFloat(max(2, min(6, widgetCount)))
+        return count * widgetUnitWidth + horizontalPadding
     }
 }

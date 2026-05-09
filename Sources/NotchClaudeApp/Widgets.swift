@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CalendarWidget: View {
+    var titleAlignment: Alignment = .leading
     private let calendar = Calendar.current
     private let weekdays = ["日", "一", "二", "三", "四", "五", "六"]
 
@@ -31,7 +32,7 @@ struct CalendarWidget: View {
     }
 
     var body: some View {
-        WidgetCard(title: monthTitle) {
+        WidgetCard(title: monthTitle, titleAlignment: titleAlignment) {
             VStack(spacing: 5) {
                 HStack(spacing: 0) {
                     ForEach(weekdays, id: \.self) { weekday in
@@ -69,9 +70,10 @@ private struct CalendarDay: Identifiable {
 
 struct TimerWidget: View {
     @ObservedObject var timerModel: TimerViewModel
+    var titleAlignment: Alignment = .leading
 
     var body: some View {
-        WidgetCard(title: "计时器", titleAlignment: .trailing) {
+        WidgetCard(title: "计时器", titleAlignment: titleAlignment) {
             VStack(spacing: 6) {
                 HStack(spacing: 4) {
                     QuickTimerButton(title: "正计") { timerModel.setCountUp() }
@@ -237,11 +239,12 @@ private struct StepButton: View {
 
 struct SystemStatsWidget: View {
     @ObservedObject var systemStats: SystemStatsProvider
+    var titleAlignment: Alignment = .leading
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 2)
 
     var body: some View {
-        WidgetCard(title: "系统", titleAlignment: .trailing) {
+        WidgetCard(title: "系统", titleAlignment: titleAlignment) {
             LazyVGrid(columns: columns, spacing: 6) {
                 SystemMetricTile(systemName: "cpu", title: "CPU", value: systemStats.cpuText)
                 SystemMetricTile(systemName: "memorychip", title: "内存", value: systemStats.memoryText)
@@ -292,7 +295,6 @@ struct WidgetCard<Content: View>: View {
                 .foregroundStyle(.white.opacity(0.56))
                 .frame(maxWidth: .infinity, alignment: titleAlignment)
             content
-            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(10)

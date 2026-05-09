@@ -6,7 +6,7 @@ swift build -c release
 
 # ——— 图标 ———
 # 优先用 ico.png，否则尝试 $ICON_SRC
-ICON_SRC="ico.png"
+ICON_SRC="myico.png"
 [[ -f "$ICON_SRC" ]] || ICON_SRC="$ICON_SRC"
 if [[ -f "$ICON_SRC" ]]; then
     rm -rf icon.iconset
@@ -53,13 +53,15 @@ cat > NotchClaudeApp.app/Contents/Info.plist << 'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.0</string>
+    <string>3.0</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>灵动岛需要控制音乐播放器以显示当前播放信息</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>
