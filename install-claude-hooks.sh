@@ -60,21 +60,38 @@ if [[ ! -f "$settings_file" ]]; then
 fi
 
 tmp_file="$(mktemp)"
-# 只覆盖本 app 需要的 hook 事件，保留 settings.json 里的其它配置。
+# 追加合并：保留 settings.json 里已有的其它 hook（如 Clawd on Desk），
+# 只在对应事件数组后面追加 notch 的 hook；重复运行时先剔除旧的 notch 条目以防叠加。
 jq --arg hook "$hook_file" '
-  .hooks = (.hooks // {}) |
-  .hooks.SessionStart = [{"hooks":[{"type":"command","command":($hook + " session_start 2>/dev/null || true"),"timeout":5}]}] |
-  .hooks.UserPromptSubmit = [{"hooks":[{"type":"command","command":($hook + " prompt 2>/dev/null || true"),"timeout":5}]}] |
-  .hooks.PermissionRequest = [{"matcher":"Bash|Write|Edit|Read|Agent|WebFetch|WebSearch","hooks":[{"type":"command","command":($hook + " permission 2>/dev/null || true"),"timeout":5}]}] |
-  .hooks.PreToolUse = [{"matcher":"Bash|Write|Edit|Read|Agent|WebFetch|WebSearch","hooks":[{"type":"command","command":($hook + " pre_tool 2>/dev/null || true"),"timeout":5}]}] |
-  .hooks.PostToolUse = [{"matcher":"Bash|Write|Edit|Read|Agent|WebFetch|WebSearch","hooks":[{"type":"command","command":($hook + " post_tool 2>/dev/null || true"),"timeout":5}]}] |
-  .hooks.PostToolUseFailure = [{"matcher":"Bash|Write|Edit|Read|Agent|WebFetch|WebSearch","hooks":[{"type":"command","command":($hook + " failure 2>/dev/null || true"),"timeout":5}]}] |
-  .hooks.Notification = [{"hooks":[{"type":"command","command":($hook + " notification 2>/dev/null || true"),"timeout":5}]}] |
-  .hooks.Stop = [{"hooks":[{"type":"command","command":($hook + " stop 2>/dev/null || true"),"timeout":5}]}]
+  # 把一个 hook 分组追加到指定事件：先滤掉所有“命令里含本脚本路径”的旧 notch 条目，再追加新的。
+  def add_notch($event; $entry):
+    .hooks[$event] = (
+      ((.hooks[$event] // [])
+        | map(select(any(.hooks[]?; (.command // "") | contains($hook)) | not)))
+      + [$entry]
+    );
+
+  .hooks = (.hooks // {})
+  | add_notch("SessionStart";
+      {"hooks":[{"type":"command","command":($hook + " session_start 2>/dev/null || true"),"timeout":5}]})
+  | add_notch("UserPromptSubmit";
+      {"hooks":[{"type":"command","command":($hook + " prompt 2>/dev/null || true"),"timeout":5}]})
+  | add_notch("PermissionRequest";
+      {"matcher":"Bash|Write|Edit|Read|Agent|WebFetch|WebSearch","hooks":[{"type":"command","command":($hook + " permission 2>/dev/null || true"),"timeout":5}]})
+  | add_notch("PreToolUse";
+      {"matcher":"Bash|Write|Edit|Read|Agent|WebFetch|WebSearch","hooks":[{"type":"command","command":($hook + " pre_tool 2>/dev/null || true"),"timeout":5}]})
+  | add_notch("PostToolUse";
+      {"matcher":"Bash|Write|Edit|Read|Agent|WebFetch|WebSearch","hooks":[{"type":"command","command":($hook + " post_tool 2>/dev/null || true"),"timeout":5}]})
+  | add_notch("PostToolUseFailure";
+      {"matcher":"Bash|Write|Edit|Read|Agent|WebFetch|WebSearch","hooks":[{"type":"command","command":($hook + " failure 2>/dev/null || true"),"timeout":5}]})
+  | add_notch("Notification";
+      {"hooks":[{"type":"command","command":($hook + " notification 2>/dev/null || true"),"timeout":5}]})
+  | add_notch("Stop";
+      {"hooks":[{"type":"command","command":($hook + " stop 2>/dev/null || true"),"timeout":5}]})
 ' "$settings_file" > "$tmp_file"
 mv "$tmp_file" "$settings_file"
 
-echo "Installed Claude Code notch hooks:"
+echo "Installed Claude Code notch hooks (merged, existing hooks preserved):"
 echo "  $hook_file"
 echo "Updated settings:"
 echo "  $settings_file"
