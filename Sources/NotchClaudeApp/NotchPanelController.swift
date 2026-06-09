@@ -79,6 +79,8 @@ final class NotchPanelController: NSObject {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "重置 Claude 状态", action: #selector(resetClaudeStatus), keyEquivalent: ""))
         menu.items.last?.target = self
+        menu.addItem(NSMenuItem(title: "安装 / 升级 hook", action: #selector(installHook), keyEquivalent: ""))
+        menu.items.last?.target = self
         let flushItem = NSMenuItem(title: "贴顶显示", action: #selector(toggleFlushToTop), keyEquivalent: "")
         flushItem.target = self
         flushItem.state = flushToTop ? .on : .off
@@ -107,6 +109,22 @@ final class NotchPanelController: NSObject {
         let statusURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude-code-notch/status.json")
         try? FileManager.default.removeItem(at: statusURL)
+    }
+
+    @objc private func installHook() {
+        HookInstaller.install { [weak self] ok, message in
+            self?.presentHookResult(ok: ok, message: message)
+        }
+    }
+
+    private func presentHookResult(ok: Bool, message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = ok ? .informational : .warning
+        alert.messageText = ok ? "Claude Code hook 已安装 / 升级" : "安装失败"
+        alert.informativeText = message
+        alert.addButton(withTitle: "好")
+        alert.runModal()
     }
 
     @objc private func toggleFlushToTop() {

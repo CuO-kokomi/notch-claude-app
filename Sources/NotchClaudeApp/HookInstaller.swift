@@ -41,4 +41,34 @@ enum HookInstaller {
             try? process.run()
         }
     }
+
+    // 手动安装/升级（右键菜单触发），运行结束后在主线程回调结果与脚本输出。
+    static func install(completion: @escaping (Bool, String) -> Void) {
+        guard let script = Bundle.main.url(forResource: "install-claude-hooks", withExtension: "sh") else {
+            completion(false, "找不到内置安装脚本，请从源码目录运行 ./install-claude-hooks.sh。")
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = [script.path]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+
+            let result: (Bool, String)
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                let output = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let ok = process.terminationStatus == 0
+                result = (ok, output.isEmpty ? (ok ? "hook 已安装 / 升级。" : "安装脚本无输出。") : output)
+            } catch {
+                result = (false, "无法运行安装脚本：\(error.localizedDescription)")
+            }
+            DispatchQueue.main.async { completion(result.0, result.1) }
+        }
+    }
 }
