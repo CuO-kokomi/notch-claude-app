@@ -34,6 +34,10 @@ if [[ -f AppIcon.icns ]]; then
     cp AppIcon.icns NotchClaudeApp.app/Contents/Resources/
 fi
 
+# 内置安装脚本，供 app 启动时自动安装/升级 Claude Code hook。
+cp install-claude-hooks.sh NotchClaudeApp.app/Contents/Resources/
+chmod +x NotchClaudeApp.app/Contents/Resources/install-claude-hooks.sh
+
 # ——— 写入 Info.plist ———
 cat > NotchClaudeApp.app/Contents/Info.plist << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -53,9 +57,9 @@ cat > NotchClaudeApp.app/Contents/Info.plist << 'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>3.0</string>
+    <string>4.0</string>
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>4</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>

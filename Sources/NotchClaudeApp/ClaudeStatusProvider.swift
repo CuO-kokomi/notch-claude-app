@@ -1,20 +1,51 @@
 import SwiftUI
+import Combine
+
+// Claude Code 状态发生关键跃迁时发出的一次性事件，供通知 / notch 动画消费。
+enum ClaudeEvent {
+    case completed(elapsed: TimeInterval)  // 活跃态 → 等待你（任务交回）
+    case needsPermission                   // 需要切回授权
+    case failed                            // 任务出错
+}
 
 @MainActor
 final class ClaudeStatusProvider: ObservableObject {
     @Published private(set) var status: ClaudeStatus = .idle
+    // 当前工具与目标，由 hook 写入（如 Edit / App.swift）。
+    @Published private(set) var tool: String?
+    @Published private(set) var detail: String?
+    // 当前工具已运行秒数，由本地计时器每秒推进，不依赖文件轮询。
+    @Published private(set) var toolElapsed: Int = 0
+
+    // 跃迁事件流：completed / needsPermission / failed。
+    let events = PassthroughSubject<ClaudeEvent, Never>()
 
     private let statusURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude-code-notch/status.json")
-    private var timer: Timer?
+    private var pollTimer: Timer?
+    private var tickTimer: Timer?
+
+    private var toolStartedAt: Date?
+    private var taskStartedAt: Date?
+    // 首次读取只用于建立基线，不触发事件，避免启动时误报历史状态。
+    private var didInitialRead = false
 
     init() {
         refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.refresh()
-            }
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
         }
+        tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    private func tick() {
+        guard status == .running, let start = toolStartedAt else {
+            if toolElapsed != 0 { toolElapsed = 0 }
+            return
+        }
+        toolElapsed = max(0, Int(Date().timeIntervalSince(start)))
     }
 
     private func refresh() {
@@ -22,30 +53,77 @@ final class ClaudeStatusProvider: ObservableObject {
         guard let data = try? Data(contentsOf: statusURL),
               let payload = try? JSONDecoder().decode(StatusPayload.self, from: data),
               !payload.isStale else {
-            status = .disconnected
+            apply(status: .disconnected, tool: nil, detail: nil, startedAt: nil)
             return
         }
-        status = ClaudeStatus(rawValue: payload.status) ?? .idle
+        let newStatus = ClaudeStatus(rawValue: payload.status) ?? .idle
+        apply(status: newStatus, tool: payload.tool, detail: payload.detail, startedAt: payload.toolStartedAt)
+    }
+
+    private func apply(status newStatus: ClaudeStatus, tool newTool: String?, detail newDetail: String?, startedAt: Date?) {
+        let previous = status
+        let wasActive = previous.isActive
+        let isActive = newStatus.isActive
+
+        tool = newTool
+        detail = newDetail
+        toolStartedAt = startedAt
+
+        // 进入活跃态（且此前不活跃）记一次任务起点，用于完成时报告整任务用时。
+        if isActive && !wasActive {
+            taskStartedAt = Date()
+        }
+
+        if didInitialRead {
+            switch newStatus {
+            case .waiting where wasActive:
+                let elapsed = taskStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+                events.send(.completed(elapsed: elapsed))
+            case .allow where previous != .allow:
+                events.send(.needsPermission)
+            case .error where previous != .error:
+                events.send(.failed)
+            default:
+                break
+            }
+        }
+        didInitialRead = true
+
+        status = newStatus
+        if newStatus != .running {
+            toolStartedAt = nil
+            toolElapsed = 0
+        }
     }
 }
 
 private struct StatusPayload: Decodable {
     let status: String
+    let tool: String?
+    let detail: String?
     let updatedAt: Date?
+    let toolStartedAt: Date?
 
     private enum CodingKeys: String, CodingKey {
         case status
+        case tool
+        case detail
         case updatedAt
+        case toolStartedAt
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         status = try container.decode(String.self, forKey: .status)
-        if let rawUpdatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt) {
-            updatedAt = ISO8601DateFormatter().date(from: rawUpdatedAt)
-        } else {
-            updatedAt = nil
-        }
+        tool = try container.decodeIfPresent(String.self, forKey: .tool)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        updatedAt = Self.parseDate(try container.decodeIfPresent(String.self, forKey: .updatedAt))
+        toolStartedAt = Self.parseDate(try container.decodeIfPresent(String.self, forKey: .toolStartedAt))
+    }
+
+    private static func parseDate(_ raw: String?) -> Date? {
+        guard let raw else { return nil }
+        return ISO8601DateFormatter().date(from: raw)
     }
 
     var isStale: Bool {
@@ -63,6 +141,14 @@ enum ClaudeStatus: String {
     case waiting
     case allow
     case error
+
+    // 活跃态：Claude 正在干活，是判定“任务完成”跃迁的前提。
+    var isActive: Bool {
+        switch self {
+        case .thinking, .running: true
+        default: false
+        }
+    }
 
     var displayText: String {
         switch self {

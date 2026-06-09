@@ -11,4 +11,5 @@ AppIcon.icns
 *.xcuserstate
 .claude/
 record/
-record/
+# 截图保留可提交（README 引用），视频等其它大文件仍忽略。
+!record/*.png

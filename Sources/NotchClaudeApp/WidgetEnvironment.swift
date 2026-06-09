@@ -4,6 +4,7 @@ import Combine
 @MainActor
 final class WidgetEnvironment: ObservableObject {
     let claudeStatus = ClaudeStatusProvider()
+    let notifications = NotificationManager()
     let timerModel = TimerViewModel()
     let systemStats = SystemStatsProvider()
     lazy var weather = WeatherProvider()
@@ -19,6 +20,9 @@ final class WidgetEnvironment: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
 
     init() {
+        // 完成 / 需授权 / 出错时发通知 + 声音，并请求一次系统通知权限。
+        notifications.observe(claudeStatus)
+        notifications.requestAuthorizationIfNeeded()
         claudeStatus.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)

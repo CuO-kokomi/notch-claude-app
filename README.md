@@ -11,6 +11,29 @@
 - **收起态**：贴合屏幕顶部 notch，显示 Claude Code 实时状态 + 计时器进度
 - **展开态**：鼠标悬停展开，显示用户自选的 2-6 个组件，支持拖拽排序
 
+## v4.0 新特性
+
+- **细化 Claude 状态**：运行中显示当前工具与目标 + 实时耗时（如 `Edit · App.swift · 12s`），收起态与展开态都能看清 Claude 在做什么
+- **走开即用**：任务完成 / 需要授权 / 出错时发系统通知 + 提示声音，离开电脑也不会错过交回时机
+- **完成动画**：任务交回瞬间，notch 整条绿光脉冲 + 图标弹出绿色对勾「完成」，随后平滑还原状态（尊重系统「减弱动态效果」）
+- **菜单开关**：右键面板可单独开关「完成通知」与「提示声音」
+- **关于与更新**：右键「关于灵动岛」查看介绍与版本，一键从 GitHub 检查最新版本
+- **自动装/升级 hook**：每次启动自动检测并安装/升级 Claude Code hook，无需手动重跑脚本；合并式写入，**不会清除其它工具（如 Clawd on Desk）的 hook**
+
+### v4.0 效果预览
+
+| 细化状态（运行中） | 完成动画（绿光 + 双勾） | 关于 & 检查更新 |
+|--------------------|------------------------|-----------------|
+| ![细化状态](record/v4-status.png) | ![完成动画](record/v4-complete.png) | ![关于更新](record/v4-about.png) |
+
+<!--
+截图占位：把对应图片放到 record/ 下同名文件即可自动显示（*.png 已可直接提交）。
+  record/v4-status.png    收起态显示「工具 · 目标 · 耗时」，如 App.swift  12s
+  record/v4-complete.png  任务完成时整条绿光脉冲 + 左右绿色对勾 +「完成」
+  record/v4-about.png     右键「关于灵动岛」弹窗（介绍 + 版本 + 检查更新）
+-->
+
+
 ## v3.0 新特性
 
 - **模块化组件系统**：14 个组件自由组合，拖拽排序，拖出删除
@@ -61,8 +84,10 @@ chmod +x build.sh && ./build.sh
 ```
 
 脚本会：
-- 安装 `~/.claude/hooks/notch-status.sh`
-- 在 `~/.claude/settings.json` 中添加 SessionStart / PreToolUse / PostToolUse / Notification / Stop 等 hook 事件
+- 安装 / 升级 `~/.claude/hooks/notch-status.sh`（带版本标记，自动识别旧版本并升级）
+- 以**合并方式**在 `~/.claude/settings.json` 中追加 SessionStart / PreToolUse / PostToolUse / Notification / Stop 等 hook 事件，保留其它工具已有的 hook
+
+> v4.0 起，App 每次启动会自动检测并安装/升级 hook，通常无需手动运行此脚本。
 
 重启 Claude Code 或打开 `/hooks` 一次即可生效。
 
@@ -73,7 +98,7 @@ chmod +x build.sh && ./build.sh
 - **拖拽组件**：左右拖拽排序，上下拖出删除
 - **右下角 + 按钮**：进入组件管理，添加新组件
 - **左下角锁定按钮**：锁定/解锁面板展开状态
-- **右键面板**：重置 Claude 状态 / 贴顶显示 / 退出
+- **右键面板**：重置 Claude 状态 / 贴顶显示 / 完成通知开关 / 提示声音开关 / 退出
 
 ## 兼容性
 

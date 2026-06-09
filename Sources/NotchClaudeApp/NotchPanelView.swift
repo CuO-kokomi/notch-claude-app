@@ -6,9 +6,13 @@ struct NotchPanelView: View {
     @State private var isLocked = false
     @State private var isDraggingWidget = false
     @State private var collapseTask: DispatchWorkItem?
+    @State private var completionGlowLevel: Double = 0
+    @State private var showCompletionCheck = false
+    @State private var completionRevertTask: DispatchWorkItem?
     @StateObject private var widgetEnv = WidgetEnvironment()
     @StateObject private var widgetConfig = WidgetConfigurationManager()
     @AppStorage("flushToTop") private var flushToTop = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let onExpandedChanged: (Bool) -> Void
     let onWidgetCountChanged: (Int) -> Void
@@ -41,9 +45,14 @@ struct NotchPanelView: View {
             }
         }
         .clipShape(panelShape)
+        // 完成发光叠在裁剪之上，绿光可溢出 notch 轮廓。
+        .overlay(completionGlow)
         // 裁剪外层圆角，避免展开内容轻微溢出破坏灵动岛轮廓。
         .padding(1)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onReceive(widgetEnv.claudeStatus.events) { event in
+            handleClaudeEvent(event)
+        }
         .onHover { hovering in
             hovering ? expand() : scheduleCollapse()
         }
@@ -65,13 +74,19 @@ struct NotchPanelView: View {
     private var collapsedContent: some View {
         ZStack {
             HStack {
-                ClaudeStatusIcon(status: widgetEnv.claudeStatus.status, compact: true)
-                    .frame(width: 26, height: 26)
-                    .padding(.leading, 13)
+                ZStack {
+                    ClaudeStatusIcon(status: widgetEnv.claudeStatus.status, compact: true)
+                        .opacity(showCompletionCheck ? 0 : 1)
+                    if showCompletionCheck {
+                        CompletionCheckIcon()
+                    }
+                }
+                .frame(width: 26, height: 26)
+                .padding(.leading, 13)
                 Spacer()
-                Image(systemName: widgetEnv.claudeStatus.status.symbolName)
+                Image(systemName: showCompletionCheck ? "checkmark" : widgetEnv.claudeStatus.status.symbolName)
                     .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(widgetEnv.claudeStatus.status.color)
+                    .foregroundStyle(showCompletionCheck ? Color.green : widgetEnv.claudeStatus.status.color)
                     .padding(.trailing, 13)
             }
 
@@ -79,20 +94,34 @@ struct NotchPanelView: View {
                 Text("Claude Code")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
                 Text(collapsedDetailText)
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(widgetEnv.claudeStatus.status.color)
+                    .foregroundStyle(showCompletionCheck ? Color.green : widgetEnv.claudeStatus.status.color)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            .frame(maxWidth: .infinity)
+            // 限定中间文字宽度，给左右图标留位，避免长命令溢出面板。
+            .frame(maxWidth: 156)
             .offset(y: 2)
         }
     }
 
     private var collapsedDetailText: String {
-        if let timerText = widgetEnv.timerModel.collapsedStatusText {
-            return "\(widgetEnv.claudeStatus.status.displayText)  \(timerText)"
+        if showCompletionCheck {
+            return "完成"
         }
-        return widgetEnv.claudeStatus.status.displayText
+        let claude = widgetEnv.claudeStatus
+        // 运行中优先显示当前工具目标 + 已耗时（如 App.swift  12s）。
+        // 收起态很窄，先把 detail 截短，保证耗时不被挤掉。
+        if claude.status == .running, let detail = claude.detail, !detail.isEmpty {
+            let short = detail.count > 14 ? String(detail.prefix(14)) + "…" : detail
+            return claude.toolElapsed > 0 ? "\(short)  \(claude.toolElapsed)s" : short
+        }
+        if let timerText = widgetEnv.timerModel.collapsedStatusText {
+            return "\(claude.status.displayText)  \(timerText)"
+        }
+        return claude.status.displayText
     }
 
     private var expandedContent: some View {
@@ -170,6 +199,46 @@ struct NotchPanelView: View {
         }
         collapseTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: task)
+    }
+
+    // 完成时溢出 notch 的绿光描边脉冲，由 completionGlowLevel 驱动呼吸。
+    private var completionGlow: some View {
+        panelShape
+            .stroke(Color.green, lineWidth: 2.5)
+            .shadow(color: .green.opacity(0.85), radius: 14)
+            .opacity(completionGlowLevel * 0.9)
+            .allowsHitTesting(false)
+    }
+
+    private func handleClaudeEvent(_ event: ClaudeEvent) {
+        // 仅在收起态做完成动画；展开态用户正盯着面板，不打扰。
+        guard case .completed = event, !isExpanded else { return }
+        triggerCompletionFlash()
+    }
+
+    private func triggerCompletionFlash() {
+        completionRevertTask?.cancel()
+        completionGlowLevel = 0
+        showCompletionCheck = true
+
+        if reduceMotion {
+            // 减弱动态效果：单次淡入淡出，无弹跳呼吸。
+            withAnimation(.easeInOut(duration: 0.35)) { completionGlowLevel = 1 }
+        } else {
+            // 0→1→0 呼吸两轮（autoreverses 偶数次回到 0）。
+            withAnimation(.easeInOut(duration: 0.45).repeatCount(4, autoreverses: true)) {
+                completionGlowLevel = 1
+            }
+        }
+
+        let revert = DispatchWorkItem {
+            withAnimation(.easeOut(duration: 0.4)) {
+                completionGlowLevel = 0
+                showCompletionCheck = false
+            }
+        }
+        completionRevertTask = revert
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.9, execute: revert)
     }
 }
 
@@ -310,6 +379,25 @@ private struct SquareTopPanelShape: Shape {
     }
 }
 
+// 任务完成时短暂替换状态图标的绿色对勾，带一次弹性放大。
+struct CompletionCheckIcon: View {
+    @State private var popped = false
+
+    var body: some View {
+        ZStack {
+            Circle().fill(Color.green)
+            Circle().stroke(.white.opacity(0.16), lineWidth: 1)
+            Image(systemName: "checkmark")
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundStyle(.black.opacity(0.85))
+        }
+        .scaleEffect(popped ? 1.0 : 0.5)
+        .onAppear {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.5)) { popped = true }
+        }
+    }
+}
+
 struct ClaudeStatusIcon: View {
     let status: ClaudeStatus
     let compact: Bool
@@ -329,6 +417,9 @@ struct ClaudeStatusIcon: View {
 
 struct ClaudeStatusWidget: View {
     let status: ClaudeStatus
+    var toolName: String? = nil
+    var detail: String? = nil
+    var elapsed: Int = 0
     var titleAlignment: Alignment = .leading
 
     var body: some View {
@@ -341,7 +432,7 @@ struct ClaudeStatusWidget: View {
                         Text(status.displayText)
                             .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(.white)
-                        Text(status.description)
+                        Text(secondaryText)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.white.opacity(0.56))
                             .lineLimit(2)
@@ -352,5 +443,20 @@ struct ClaudeStatusWidget: View {
                     .foregroundStyle(status.color)
             }
         }
+    }
+
+    // 运行中显示当前工具与目标（如 Edit · App.swift · 12s），否则显示状态说明。
+    private var secondaryText: String {
+        guard status == .running, let detail, !detail.isEmpty else {
+            return status.description
+        }
+        var line = detail
+        if let toolName, !toolName.isEmpty {
+            line = "\(toolName) · \(detail)"
+        }
+        if elapsed > 0 {
+            line += " · \(elapsed)s"
+        }
+        return line
     }
 }
