@@ -64,7 +64,7 @@
 
 ### 方式一：DMG 安装（推荐）
 
-从 [Releases](../../releases) 下载 `NotchClaude.dmg`，打开后将 `NotchClaudeApp.app` 拖入 `Applications`，再双击 `install-claude-hooks.sh` 完成 Claude Code hook 配置。
+从 [Releases](../../releases) 下载 `NotchClaude.dmg`，打开后将 `NotchClaudeApp.app` 拖入 `Applications` 即可。首次启动 App 会自动配置 / 升级 Claude Code hook（合并式写入，不影响其它工具的 hook），无需手动运行脚本。
 
 ### 方式二：从源码构建
 

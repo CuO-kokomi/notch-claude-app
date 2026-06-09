@@ -5,17 +5,16 @@ set -euo pipefail
 
 mkdir -p ./NotchDMG
 cp -R NotchClaudeApp.app ./NotchDMG/
-cp install-claude-hooks.sh ./NotchDMG/
+# hook 已由 app 启动时自动安装/升级，无需在 DMG 里附带安装脚本。
 
 create-dmg \
   --volname "NotchClaude" \
   --window-pos 200 120 \
-  --window-size 650 400 \
+  --window-size 540 380 \
   --icon-size 100 \
-  --icon "NotchClaudeApp.app" 150 190 \
-  --icon "install-claude-hooks.sh" 300 190 \
+  --icon "NotchClaudeApp.app" 140 180 \
   --hide-extension "NotchClaudeApp.app" \
-  --app-drop-link 480 190 \
+  --app-drop-link 400 180 \
   NotchClaude.dmg \
   ./NotchDMG
 
