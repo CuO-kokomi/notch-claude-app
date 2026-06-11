@@ -6,7 +6,7 @@ enum WidgetRegistry {
             id: "claude_status",
             displayName: "Claude 状态",
             iconName: "brain.head.profile",
-            viewBuilder: { env, align in AnyView(ClaudeStatusWidget(status: env.claudeStatus.status, toolName: env.claudeStatus.tool, detail: env.claudeStatus.detail, elapsed: env.claudeStatus.toolElapsed, titleAlignment: align)) }
+            viewBuilder: { env, align in AnyView(ClaudeStatusWidget(claude: env.claudeStatus, permissions: env.permissions, titleAlignment: align)) }
         ),
         WidgetDescriptor(
             id: "calendar",

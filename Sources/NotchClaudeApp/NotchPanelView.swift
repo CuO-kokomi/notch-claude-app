@@ -9,14 +9,21 @@ struct NotchPanelView: View {
     @State private var completionGlowLevel: Double = 0
     @State private var showCompletionCheck = false
     @State private var completionRevertTask: DispatchWorkItem?
+    // 贴顶模式探出态：文字变化时向下伸出一行提醒，几秒后收回；待审批时持续伸出。
+    @State private var isPeeking = false
+    @State private var peekRetractTask: DispatchWorkItem?
     @StateObject private var widgetEnv = WidgetEnvironment()
     @StateObject private var widgetConfig = WidgetConfigurationManager()
     @AppStorage("flushToTop") private var flushToTop = false
+    // 反向键：默认 false = 探出提醒开启，右键菜单可关。
+    @AppStorage("peekDisabled") private var peekDisabled = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let onExpandedChanged: (Bool) -> Void
     let onWidgetCountChanged: (Int) -> Void
     let onAddModeChanged: (Bool) -> Void
+    // 回传探出行数给控制器算交互区域（纯数据，控制器不得借此 setFrame）。
+    let onPeekChanged: (Int) -> Void
 
     private var usesSquareTopCorners: Bool {
         flushToTop && !isExpanded
@@ -27,6 +34,60 @@ struct NotchPanelView: View {
     }
 
     var body: some View {
+        // 收起态窗口比可见岛体高（下方透明区留给探出行），岛体顶部对齐、
+        // 高度由 peekLineCount 驱动纯 SwiftUI 动画——窗口在探出期间绝不 setFrame。
+        Group {
+            if isExpanded {
+                island
+            } else {
+                VStack(spacing: 0) {
+                    island.frame(height: collapsedVisibleHeight)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onReceive(widgetEnv.claudeStatus.events) { event in
+            handleClaudeEvent(event)
+        }
+        .onChange(of: widgetConfig.widgetCount) { newCount in
+            onWidgetCountChanged(newCount)
+        }
+        .onChange(of: isAddMode) { newValue in
+            onAddModeChanged(newValue)
+        }
+        // 贴顶模式：状态/工具/目标文字变化时探出一行提醒（耗时秒数跳动不触发）。
+        .onChange(of: peekTriggerKey) { _ in
+            triggerPeek()
+        }
+        // 待审批期间持续探出不收回，处理完短暂显示后收回。
+        .onChange(of: widgetEnv.permissions.pending.count) { count in
+            guard flushToTop, !peekDisabled else { return }
+            if count > 0 {
+                setPeek(true, autoRetract: false)
+            } else if isPeeking {
+                schedulePeekRetract(after: 1.2)
+            }
+        }
+        .onChange(of: peekLineCount) { lines in
+            onPeekChanged(lines)
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                widgetEnv.warmUp()
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: peekLineCount)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isExpanded)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: flushToTop)
+    }
+
+    // 与旧窗口尺寸一致：主行 42 + 探出行各 26。
+    private var collapsedVisibleHeight: CGFloat {
+        42 + CGFloat(peekLineCount) * 26
+    }
+
+    private var island: some View {
         ZStack {
             panelShape
                 .fill(.black.opacity(0.86))
@@ -49,62 +110,232 @@ struct NotchPanelView: View {
         .overlay(completionGlow)
         // 裁剪外层圆角，避免展开内容轻微溢出破坏灵动岛轮廓。
         .padding(1)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onReceive(widgetEnv.claudeStatus.events) { event in
-            handleClaudeEvent(event)
-        }
+        // 悬停只在可见岛体上生效，收起态下方透明区不触发展开。
         .onHover { hovering in
-            hovering ? expand() : scheduleCollapse()
-        }
-        .onChange(of: widgetConfig.widgetCount) { newCount in
-            onWidgetCountChanged(newCount)
-        }
-        .onChange(of: isAddMode) { newValue in
-            onAddModeChanged(newValue)
-        }
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                widgetEnv.warmUp()
+            if hovering {
+                // 收起态显示权限审批按钮时暂停悬停展开，否则鼠标刚靠近按钮面板就变形了。
+                if isExpanded || widgetEnv.permissions.pending.isEmpty { expand() }
+            } else {
+                scheduleCollapse()
             }
         }
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isExpanded)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: flushToTop)
     }
 
     private var collapsedContent: some View {
         ZStack {
-            HStack {
-                ZStack {
-                    ClaudeStatusIcon(status: widgetEnv.claudeStatus.status, compact: true)
-                        .opacity(showCompletionCheck ? 0 : 1)
-                    if showCompletionCheck {
-                        CompletionCheckIcon()
+            VStack(spacing: 0) {
+                Group {
+                    if let request = widgetEnv.permissions.pending.first {
+                        collapsedPermissionText(request)
+                    } else {
+                        collapsedStatusText
                     }
                 }
-                .frame(width: 26, height: 26)
-                .padding(.leading, 13)
-                Spacer()
-                Image(systemName: showCompletionCheck ? "checkmark" : widgetEnv.claudeStatus.status.symbolName)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(showCompletionCheck ? Color.green : widgetEnv.claudeStatus.status.color)
-                    .padding(.trailing, 13)
+                .frame(height: 42)
+                if peekLineCount >= 1 {
+                    peekLine
+                }
+                if peekLineCount >= 2, let request = widgetEnv.permissions.pending.first {
+                    peekAlwaysAllowLine(request)
+                }
             }
-
-            VStack(spacing: 1) {
-                Text("Claude Code")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(1)
-                Text(collapsedDetailText)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(showCompletionCheck ? Color.green : widgetEnv.claudeStatus.status.color)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            // 左右图标/按钮独立于行结构：仅两行探出（文字 + 始终允许）时钉在探出区域内
+            // 垂直居中（底部对齐 + 区域等高），其余情况一律相对整个岛体居中。
+            if widgetEnv.permissions.pending.first != nil && peekLineCount >= 2 {
+                HStack {
+                    collapsedLeftItem
+                    Spacer()
+                    collapsedRightItem
+                }
+                .frame(height: CGFloat(peekLineCount) * 26)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+            } else {
+                HStack {
+                    collapsedLeftItem
+                    Spacer()
+                    collapsedRightItem
+                }
             }
-            // 限定中间文字宽度，给左右图标留位，避免长命令溢出面板。
-            .frame(maxWidth: 156)
-            .offset(y: 2)
         }
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: peekLineCount)
+    }
+
+    // 探出行数：审批时 1 行文字 +（有规则建议时）1 行"始终允许"；平时文字变化探出 1 行。
+    private var peekLineCount: Int {
+        guard flushToTop, !peekDisabled, !isExpanded else { return 0 }
+        if let request = widgetEnv.permissions.pending.first {
+            return request.alwaysAllowSuggestion != nil ? 2 : 1
+        }
+        return isPeeking ? 1 : 0
+    }
+
+    @ViewBuilder
+    private var collapsedLeftItem: some View {
+        if let request = widgetEnv.permissions.pending.first {
+            Button(action: { widgetEnv.permissions.respond(request.id, decision: .allow) }) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 12, weight: .heavy))
+                    .foregroundStyle(.black.opacity(0.85))
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(Color.green.opacity(0.92)))
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 10)
+        } else {
+            ZStack {
+                ClaudeStatusIcon(status: widgetEnv.claudeStatus.status, compact: true)
+                    .opacity(showCompletionCheck ? 0 : 1)
+                if showCompletionCheck {
+                    CompletionCheckIcon()
+                }
+            }
+            .frame(width: 26, height: 26)
+            .padding(.leading, 13)
+        }
+    }
+
+    @ViewBuilder
+    private var collapsedRightItem: some View {
+        if let request = widgetEnv.permissions.pending.first {
+            Button(action: { widgetEnv.permissions.respond(request.id, decision: .deny) }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .heavy))
+                    .foregroundStyle(.black.opacity(0.85))
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill(Color.red.opacity(0.88)))
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 10)
+        } else {
+            Image(systemName: showCompletionCheck ? "checkmark" : widgetEnv.claudeStatus.status.symbolName)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(showCompletionCheck ? Color.green : widgetEnv.claudeStatus.status.color)
+                .padding(.trailing, 13)
+        }
+    }
+
+    // MARK: - 贴顶探出行
+
+    // 贴顶时主行文字被物理刘海挡住，探出行在刘海下方完整显示一行提醒。
+    private var peekLine: some View {
+        Text(peekLineText)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(peekLineColor)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            // 左右图标/按钮全高居中后会盖到探出行两端，文字必须避开。
+            .padding(.horizontal, 48)
+            .frame(maxWidth: .infinity)
+            .frame(height: 26)
+            .transition(.opacity)
+    }
+
+    private var peekLineText: String {
+        if let request = widgetEnv.permissions.pending.first {
+            return request.detail.map { "\(request.toolName) 请求权限 · \($0)" }
+                ?? "\(request.toolName) 请求权限"
+        }
+        if showCompletionCheck { return "完成" }
+        return collapsedSecondLine
+    }
+
+    private var peekLineColor: Color {
+        if !widgetEnv.permissions.pending.isEmpty { return .orange }
+        if showCompletionCheck { return .green }
+        return widgetEnv.claudeStatus.status.color
+    }
+
+    // 审批时的第二行：一键"始终允许"（带 Claude Code 的规则建议时才出现）。
+    private func peekAlwaysAllowLine(_ request: PermissionRequest) -> some View {
+        Button(action: { widgetEnv.permissions.respond(request.id, decision: .alwaysAllow) }) {
+            Text("始终允许")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.black.opacity(0.85))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.orange.opacity(0.9)))
+        }
+        .buttonStyle(.plain)
+        // 避开两侧全高居中的 ✓/✗ 按钮。
+        .padding(.horizontal, 48)
+        .frame(maxWidth: .infinity)
+        .frame(height: 26)
+        .transition(.opacity)
+    }
+
+    // 状态/工具/目标的指纹：变化才触发探出，秒数跳动不算。
+    private var peekTriggerKey: String {
+        let claude = widgetEnv.claudeStatus
+        return "\(claude.status.rawValue)|\(claude.tool ?? "")|\(claude.detail ?? "")|\(showCompletionCheck)"
+    }
+
+    private func triggerPeek() {
+        guard flushToTop, !peekDisabled, !isExpanded else { return }
+        setPeek(true, autoRetract: widgetEnv.permissions.pending.isEmpty)
+    }
+
+    private func setPeek(_ on: Bool, autoRetract: Bool) {
+        peekRetractTask?.cancel()
+        peekRetractTask = nil
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isPeeking = on }
+        if on && autoRetract {
+            schedulePeekRetract(after: 1.5)
+        }
+    }
+
+    private func schedulePeekRetract(after delay: TimeInterval) {
+        peekRetractTask?.cancel()
+        let task = DispatchWorkItem {
+            guard widgetEnv.permissions.pending.isEmpty else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isPeeking = false }
+        }
+        peekRetractTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
+    }
+
+    // 权限请求：中间显示工具与命令摘要（左右 ✓/✗ 按钮在 collapsedLeftItem/RightItem）。
+    private func collapsedPermissionText(_ request: PermissionRequest) -> some View {
+        VStack(spacing: 1) {
+            Text(collapsedPermissionTitle(request))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.orange)
+                .lineLimit(1)
+            Text(request.detail ?? "等待批准")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.78))
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .frame(maxWidth: 148)
+        .offset(y: 2)
+    }
+
+    private func collapsedPermissionTitle(_ request: PermissionRequest) -> String {
+        let queued = widgetEnv.permissions.pending.count - 1
+        return queued > 0 ? "\(request.toolName) 请求权限 +\(queued)" : "\(request.toolName) 请求权限"
+    }
+
+    private var collapsedStatusText: some View {
+        VStack(spacing: 1) {
+            Text("Claude Code")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.92))
+                .lineLimit(1)
+            Text(collapsedSecondLine)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(showCompletionCheck ? Color.green : widgetEnv.claudeStatus.status.color)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        // 限定中间文字宽度，给左右图标留位，避免长命令溢出面板。
+        .frame(maxWidth: 156)
+        .offset(y: 2)
+    }
+
+    // 第二行 = 状态/工具文字 + 多会话数量角标（×N 跟文字同行）。
+    private var collapsedSecondLine: String {
+        let count = widgetEnv.claudeStatus.sessions.count
+        return count >= 2 ? "\(collapsedDetailText)  ×\(count)" : collapsedDetailText
     }
 
     private var collapsedDetailText: String {
@@ -416,47 +647,169 @@ struct ClaudeStatusIcon: View {
 }
 
 struct ClaudeStatusWidget: View {
-    let status: ClaudeStatus
-    var toolName: String? = nil
-    var detail: String? = nil
-    var elapsed: Int = 0
+    @ObservedObject var claude: ClaudeStatusProvider
+    @ObservedObject var permissions: PermissionServer
     var titleAlignment: Alignment = .leading
 
     var body: some View {
-        WidgetCard(title: "Claude", titleAlignment: titleAlignment) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    ClaudeStatusIcon(status: status, compact: false)
-                        .frame(width: 42, height: 42)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(status.displayText)
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(.white)
-                        Text(secondaryText)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.56))
-                            .lineLimit(2)
-                    }
-                }
-                Text(status.actionText)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(status.color)
+        WidgetCard(title: cardTitle, titleAlignment: titleAlignment) {
+            if let request = permissions.pending.first {
+                permissionContent(request)
+            } else if claude.sessions.count >= 2 {
+                sessionListContent
+            } else {
+                singleSessionContent
             }
+        }
+    }
+
+    // 上下文用量直接挂在标题上：Claude · 上下文 23%。
+    private var cardTitle: String {
+        guard let percent = claude.sessions.first?.contextPercent else { return "Claude" }
+        return "Claude · 上下文 \(percent)%"
+    }
+
+    // MARK: - 权限审批
+
+    private func permissionContent(_ request: PermissionRequest) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                ClaudeStatusIcon(status: .allow, compact: false)
+                    .frame(width: 42, height: 42)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("需要授权")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
+                    Text(permissionSubtitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                }
+            }
+            if let detail = request.detail {
+                Text(detail)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.74))
+                    .lineLimit(request.alwaysAllowSuggestion != nil ? 1 : 2)
+                    .truncationMode(.tail)
+            }
+            // 卡片宽度有限，三个按钮排不下：允许/拒绝一行，始终允许单独一行。
+            HStack(spacing: 8) {
+                permissionButton("允许", color: .green) {
+                    permissions.respond(request.id, decision: .allow)
+                }
+                permissionButton("拒绝", color: .red) {
+                    permissions.respond(request.id, decision: .deny)
+                }
+            }
+            if request.alwaysAllowSuggestion != nil {
+                permissionButton("始终允许", color: .orange) {
+                    permissions.respond(request.id, decision: .alwaysAllow)
+                }
+            }
+        }
+    }
+
+    private var permissionSubtitle: String {
+        guard let request = permissions.pending.first else { return "" }
+        let queued = permissions.pending.count - 1
+        return queued > 0 ? "\(request.toolName) · 还有 \(queued) 个排队" : request.toolName
+    }
+
+    private func permissionButton(_ label: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.black.opacity(0.85))
+                .lineLimit(1)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity)
+                .background(Capsule().fill(color.opacity(0.9)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - 单会话
+
+    private var singleSessionContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                ClaudeStatusIcon(status: claude.status, compact: false)
+                    .frame(width: 42, height: 42)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(claude.status.displayText)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
+                    Text(secondaryText)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.56))
+                        .lineLimit(2)
+                }
+            }
+            // 任务交回时展示 Claude 最后一条回复的摘要，"走开即用"看一眼结果。
+            if claude.status == .waiting, let result = claude.sessions.first?.lastResult {
+                Text(result)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+            }
+            Text(claude.status.actionText)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(claude.status.color)
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
     }
 
     // 运行中显示当前工具与目标（如 Edit · App.swift · 12s），否则显示状态说明。
     private var secondaryText: String {
-        guard status == .running, let detail, !detail.isEmpty else {
-            return status.description
+        guard claude.status == .running, let detail = claude.detail, !detail.isEmpty else {
+            return claude.status.description
         }
         var line = detail
-        if let toolName, !toolName.isEmpty {
+        if let toolName = claude.tool, !toolName.isEmpty {
             line = "\(toolName) · \(detail)"
         }
-        if elapsed > 0 {
-            line += " · \(elapsed)s"
+        if claude.toolElapsed > 0 {
+            line += " · \(claude.toolElapsed)s"
         }
         return line
     }
+
+    // MARK: - 多会话列表
+
+    private var sessionListContent: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(claude.sessions.prefix(3)) { session in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(session.status.color)
+                        .frame(width: 9, height: 9)
+                    Text(session.projectName ?? String(session.id.prefix(8)))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.92))
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text(sessionRowText(session))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(session.status.color)
+                        .lineLimit(1)
+                }
+            }
+            if claude.sessions.count > 3 {
+                Text("+\(claude.sessions.count - 3) 个会话")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+        }
+    }
+
+    private func sessionRowText(_ session: ClaudeSession) -> String {
+        if session.status == .running, let detail = session.detail, !detail.isEmpty {
+            return detail.count > 12 ? String(detail.prefix(12)) + "…" : detail
+        }
+        return session.status.displayText
+    }
 }
+

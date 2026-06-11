@@ -5,6 +5,7 @@ import Combine
 final class WidgetEnvironment: ObservableObject {
     let claudeStatus = ClaudeStatusProvider()
     let notifications = NotificationManager()
+    let permissions = PermissionServer()
     let timerModel = TimerViewModel()
     let systemStats = SystemStatsProvider()
     lazy var weather = WeatherProvider()
@@ -23,7 +24,13 @@ final class WidgetEnvironment: ObservableObject {
         // 完成 / 需授权 / 出错时发通知 + 声音，并请求一次系统通知权限。
         notifications.observe(claudeStatus)
         notifications.requestAuthorizationIfNeeded()
+        permissions.onNewRequest = { [weak self] request in
+            self?.notifications.notifyPermissionRequest(request)
+        }
         claudeStatus.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        permissions.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
         timerModel.objectWillChange.sink { [weak self] _ in

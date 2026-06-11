@@ -2,7 +2,10 @@ import AppKit
 import SwiftUI
 
 final class NotchPanelController: NSObject {
-    private let collapsedSize = NSSize(width: 260, height: 42)
+    // 收起态窗口固定按最大探出高度（42 主行 + 2×26 探出行）开窗，下方留透明区；
+    // 探出/收回是纯 SwiftUI 内部动画，绝不在内容动画期间 setFrame——
+    // 那会和 NSHostingView 的约束更新互相重入，直接崩溃。
+    private let collapsedSize = NSSize(width: 260, height: 94)
     private var expandedSize: NSSize {
         NSSize(width: expandedWidth, height: 188)
     }
@@ -18,6 +21,10 @@ final class NotchPanelController: NSObject {
     private static let widgetUnitWidth: CGFloat = 170
     private static let horizontalPadding: CGFloat = 40
 
+    // 收起态可见岛体高度（42 + 探出行×26），由视图回传；窗口其余部分是透明死区。
+    private var visibleCollapsedHeight: CGFloat = 42
+    private var mouseMonitors: [Any] = []
+
     override init() {
         super.init()
         let widgetCount = UserDefaults.standard.stringArray(forKey: "activeWidgetIDs")?.count ?? 4
@@ -31,9 +38,15 @@ final class NotchPanelController: NSObject {
             },
             onAddModeChanged: { [weak self] inAddMode in
                 self?.handleAddModeChange(inAddMode)
+            },
+            onPeekChanged: { [weak self] lines in
+                // 仅更新交互区域高度，绝不在这里 setFrame。
+                self?.visibleCollapsedHeight = 42 + CGFloat(lines) * 26
+                self?.updateMouseIgnoring()
             }
         )
         createPanel()
+        installMouseMonitors()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screenParametersChanged),
@@ -63,6 +76,9 @@ final class NotchPanelController: NSObject {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
         let hostingView = NotchHostingView(rootView: rootView)
+        // 窗口尺寸全程由 setFrame 手动控制；禁用 NSHostingView 的内容尺寸约束，
+        // 否则探出伸缩时它在 updateConstraints 里重算 minSize 会触发约束重入崩溃。
+        hostingView.sizingOptions = []
         hostingView.menu = contextMenu()
         panel.contentView = hostingView
     }
@@ -85,6 +101,11 @@ final class NotchPanelController: NSObject {
         flushItem.target = self
         flushItem.state = flushToTop ? .on : .off
         menu.addItem(flushItem)
+        // 贴顶时文字变化向下探出一行提醒；不喜欢可以关掉。
+        let peekItem = NSMenuItem(title: "探出提醒", action: #selector(togglePeek), keyEquivalent: "")
+        peekItem.target = self
+        peekItem.state = UserDefaults.standard.bool(forKey: "peekDisabled") ? .off : .on
+        menu.addItem(peekItem)
         menu.addItem(.separator())
 
         let notifyItem = NSMenuItem(title: "完成通知", action: #selector(toggleNotify), keyEquivalent: "")
@@ -95,6 +116,11 @@ final class NotchPanelController: NSObject {
         soundItem.target = self
         soundItem.state = UserDefaults.standard.bool(forKey: NotificationManager.soundKey) ? .on : .off
         menu.addItem(soundItem)
+        // 上下文窗口大小 hook 无法可靠探测；1M 订阅用户勾上后百分比按 1M 计算。
+        let context1MItem = NSMenuItem(title: "上下文按 1M 窗口计算", action: #selector(toggleContext1M), keyEquivalent: "")
+        context1MItem.target = self
+        context1MItem.state = UserDefaults.standard.bool(forKey: ClaudeStatusProvider.context1MKey) ? .on : .off
+        menu.addItem(context1MItem)
         menu.addItem(.separator())
         let aboutItem = NSMenuItem(title: "关于灵动岛", action: #selector(showAbout), keyEquivalent: "")
         aboutItem.target = self
@@ -106,9 +132,12 @@ final class NotchPanelController: NSObject {
     }
 
     @objc private func resetClaudeStatus() {
-        let statusURL = FileManager.default.homeDirectoryForCurrentUser
+        // v5 起状态按会话存放在 sessions/ 目录，连同 v4 的旧单文件一并清掉。
+        let fm = FileManager.default
+        try? fm.removeItem(at: ClaudeStatusProvider.sessionsDir)
+        let legacyURL = fm.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude-code-notch/status.json")
-        try? FileManager.default.removeItem(at: statusURL)
+        try? fm.removeItem(at: legacyURL)
     }
 
     @objc private func installHook() {
@@ -141,6 +170,18 @@ final class NotchPanelController: NSObject {
 
     @objc private func toggleSound() {
         let key = NotificationManager.soundKey
+        UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: key), forKey: key)
+        (panel.contentView as? NotchHostingView)?.menu = contextMenu()
+    }
+
+    @objc private func togglePeek() {
+        let key = "peekDisabled"
+        UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: key), forKey: key)
+        (panel.contentView as? NotchHostingView)?.menu = contextMenu()
+    }
+
+    @objc private func toggleContext1M() {
+        let key = ClaudeStatusProvider.context1MKey
         UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: key), forKey: key)
         (panel.contentView as? NotchHostingView)?.menu = contextMenu()
     }
@@ -251,6 +292,41 @@ final class NotchPanelController: NSObject {
         let targetSize = expanded ? expandedSize : collapsedSize
         let frame = frameFor(size: targetSize)
         panel.setFrame(frame, display: true, animate: true)
+        updateMouseIgnoring()
+    }
+
+    // MARK: - 透明死区点击穿透
+
+    // 收起态窗口固定 94 高，下方透明区会吞掉点击（macOS 不会自动按像素透明度穿透）。
+    // 全局+本地鼠标监视：鼠标不在可见岛体上时让整个窗口忽略鼠标事件。
+    private func installMouseMonitors() {
+        let global = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved], handler: { [weak self] _ in
+            self?.updateMouseIgnoring()
+        })
+        let local = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved], handler: { [weak self] event in
+            self?.updateMouseIgnoring()
+            return event
+        })
+        mouseMonitors = [global, local].compactMap { $0 }
+    }
+
+    private func updateMouseIgnoring() {
+        // 展开态窗口就是岛体本身，没有死区。
+        guard !isExpanded else {
+            if panel.ignoresMouseEvents { panel.ignoresMouseEvents = false }
+            return
+        }
+        let frame = panel.frame
+        let interactive = NSRect(
+            x: frame.minX,
+            y: frame.maxY - visibleCollapsedHeight,
+            width: frame.width,
+            height: visibleCollapsedHeight
+        )
+        let inside = interactive.contains(NSEvent.mouseLocation)
+        if panel.ignoresMouseEvents == inside {
+            panel.ignoresMouseEvents = !inside
+        }
     }
 
     private func position(size: NSSize) {

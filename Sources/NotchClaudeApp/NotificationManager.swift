@@ -30,6 +30,12 @@ final class NotificationManager {
         }
     }
 
+    // 刘海可直接审批的权限请求：通知带上工具与命令摘要。
+    func notifyPermissionRequest(_ request: PermissionRequest) {
+        let summary = request.detail.map { "\(request.toolName) · \($0)" } ?? request.toolName
+        notify(title: "需要授权", body: "\(summary)（可在刘海上直接批准）", sound: "Funk")
+    }
+
     func requestAuthorizationIfNeeded() {
         guard notificationsAvailable else { return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }

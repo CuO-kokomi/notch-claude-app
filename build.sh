@@ -57,7 +57,7 @@ cat > NotchClaudeApp.app/Contents/Info.plist << 'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.0</string>
+    <string>5.0</string>
     <key>CFBundleVersion</key>
     <string>4</string>
     <key>LSMinimumSystemVersion</key>

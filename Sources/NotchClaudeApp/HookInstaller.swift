@@ -4,7 +4,7 @@ import Foundation
 // 缺失或版本过旧时，后台运行 app 内置的安装脚本（合并式，保留其它工具的 hook）。
 enum HookInstaller {
     // 必须与 install-claude-hooks.sh 的 HOOK_VERSION 及 hook 内标记保持一致。
-    static let currentVersion = 4
+    static let currentVersion = 5
 
     private static var hookURL: URL {
         FileManager.default.homeDirectoryForCurrentUser

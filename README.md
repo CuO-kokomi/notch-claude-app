@@ -11,6 +11,27 @@
 - **收起态**：贴合屏幕顶部 notch，显示 Claude Code 实时状态 + 计时器进度
 - **展开态**：鼠标悬停展开，显示用户自选的 2-6 个组件，支持拖拽排序
 
+## v5.0 新特性
+
+- **刘海直接批准权限**：Claude Code 请求工具权限时，收起态左右图标变成 ✓ / ✗ 按钮，绿勾允许、红叉拒绝，不用切回终端；展开态 Claude 卡片显示完整命令 + 大按钮。在终端先回答的话刘海卡片自动消失；App 没在运行则自动回退到终端确认，零风险
+- **多会话支持**：多个 Claude Code 终端并行时按会话独立追踪（每会话一个状态文件），收起态显示 `×N` 角标，展开态切换为会话列表（项目名 + 状态 + 当前工具）；按"需授权 > 出错 > 运行中"优先级聚合显示最需要关注的会话，并自动清理已退出进程的孤儿会话
+- **完成不再误报**：Stop 时若仍有后台任务 / 定时任务 / stop-hook 续跑则不触发完成动画；被伪装成普通结束的 API 错误（限流、计费失败等）会被识别为出错状态
+- **完成看得到结果**：任务交回时从 transcript 提取 Claude 最后一条回复摘要，展开态直接看结果，"走开即用"更完整
+- **上下文用量**：展开态 Claude 卡片角落显示上下文窗口占用百分比，>60% 变黄、>85% 变红，提醒该收尾或 `/compact`
+
+### v5.0 效果预览
+
+| 权限审批（收起态） | 多会话列表 | 结果摘要 + 上下文 |
+|--------------------|------------|-------------------|
+| ![权限审批](record/v5-permission.png) | ![多会话](record/v5-sessions.png) | ![结果摘要](record/v5-result.png) |
+
+<!--
+截图占位：把对应图片放到 record/ 下同名文件即可自动显示。
+  record/v5-permission.png  收起态橙色权限条：左绿勾允许、右红叉拒绝、中间工具+命令
+  record/v5-sessions.png    展开态 Claude 卡片的多会话行列表
+  record/v5-result.png      完成后展开态显示最后回复摘要 + 上下文百分比
+-->
+
 ## v4.0 新特性
 
 - **细化 Claude 状态**：运行中显示当前工具与目标 + 实时耗时（如 `Edit · App.swift · 12s`），收起态与展开态都能看清 Claude 在做什么
@@ -85,7 +106,8 @@ chmod +x build.sh && ./build.sh
 
 脚本会：
 - 安装 / 升级 `~/.claude/hooks/notch-status.sh`（带版本标记，自动识别旧版本并升级）
-- 以**合并方式**在 `~/.claude/settings.json` 中追加 SessionStart / PreToolUse / PostToolUse / Notification / Stop 等 hook 事件，保留其它工具已有的 hook
+- 以**合并方式**在 `~/.claude/settings.json` 中追加 SessionStart / SessionEnd / PreToolUse / PostToolUse / Notification / Stop 等 hook 事件，保留其它工具已有的 hook
+- 注册 PermissionRequest **HTTP hook**（`127.0.0.1:23889`），权限请求直达刘海审批；App 未运行时 Claude Code 自动回退终端确认
 
 > v4.0 起，App 每次启动会自动检测并安装/升级 hook，通常无需手动运行此脚本。
 
@@ -110,7 +132,9 @@ chmod +x build.sh && ./build.sh
 - SwiftUI + AppKit，无第三方依赖
 - 模块化 Widget 注册表架构
 - `NSPanel` borderless / nonactivating
-- Claude Code hooks → 本地 JSON → Swift 轮询
+- Claude Code hooks → 每会话本地 JSON → Swift 轮询聚合
+- Network.framework 本地 HTTP 服务承接 PermissionRequest 双向 hook（挂起连接等用户决定）
+- Transcript JSONL 尾部解析：最后回复摘要 / API 错误识别 / 上下文用量
 - MediaRemote 私有框架读取 Now Playing
 - CoreAudio 音量控制
 - IOPowerSources 电池状态
