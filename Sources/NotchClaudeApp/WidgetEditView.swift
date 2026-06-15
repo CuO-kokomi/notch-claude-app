@@ -127,22 +127,16 @@ private struct ScrollHintColumn<Content: View>: View {
         .frame(maxHeight: .infinity)
         .overlay(alignment: .bottom) {
             if hasMore {
-                ZStack(alignment: .bottom) {
-                    LinearGradient(
-                        colors: [.black.opacity(0), .black.opacity(0.6)],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    .frame(height: 34)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.85))
-                        .padding(.bottom, 3)
-                        // 轻微上下浮动，比静止箭头更像"可滚动"的提示。
-                        .offset(y: bob ? 2 : -2)
-                        .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: bob)
-                }
-                .allowsHitTesting(false)
-                .onAppear { bob = true }
+                // 只留浮动箭头 + 柔和投影（在玻璃上保证可见），不叠硬边渐隐矩形。
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
+                    .padding(.bottom, 3)
+                    .offset(y: bob ? 2 : -2)
+                    .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: bob)
+                    .allowsHitTesting(false)
+                    .onAppear { bob = true }
             }
         }
     }

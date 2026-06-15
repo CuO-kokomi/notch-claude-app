@@ -288,24 +288,21 @@ struct WidgetCard<Content: View>: View {
     var titleAlignment: Alignment = .leading
     @ViewBuilder let content: Content
 
+    @AppStorage(GlassStyle.key) private var glassStyleRaw = GlassStyle.deep.rawValue
+    private var glassStyle: GlassStyle { GlassStyle(rawValue: glassStyleRaw) ?? .deep }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.56))
+                .foregroundStyle(.white.opacity(0.72))
                 .frame(maxWidth: .infinity, alignment: titleAlignment)
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(.white.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
-        )
+        // 浮片：外壳玻璃之上的半透明亮色块，不叠第二层玻璃（避免糊成一团）。
+        .background(WidgetCardSurface(style: glassStyle))
     }
 }
 

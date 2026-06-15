@@ -17,6 +17,8 @@ struct NotchPanelView: View {
     @AppStorage("flushToTop") private var flushToTop = false
     // 反向键：默认 false = 探出提醒开启，右键菜单可关。
     @AppStorage("peekDisabled") private var peekDisabled = false
+    @AppStorage(GlassStyle.key) private var glassStyleRaw = GlassStyle.deep.rawValue
+    private var glassStyle: GlassStyle { GlassStyle(rawValue: glassStyleRaw) ?? .deep }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let onExpandedChanged: (Bool) -> Void
@@ -97,14 +99,18 @@ struct NotchPanelView: View {
 
     private var island: some View {
         ZStack {
-            panelShape
-                .fill(.black.opacity(0.86))
-                .overlay(
+            // 展开态用玻璃质感；收起态贴着 notch，保持纯深色以求最高对比度。
+            Group {
+                if isExpanded {
+                    GlassPlate(shape: panelShape, style: glassStyle)
+                } else {
                     panelShape
-                        .stroke(.white.opacity(0.10), lineWidth: 1)
-                )
-                // 阴影跟随同一条弹簧加深，给展开一点"浮起"的纵深感。
-                .shadow(color: .black.opacity(0.35), radius: isExpanded ? 30 : 16, y: isExpanded ? 12 : 8)
+                        .fill(.black.opacity(0.86))
+                        .overlay(panelShape.stroke(.white.opacity(0.10), lineWidth: 1))
+                }
+            }
+            // 阴影跟随同一条弹簧加深，给展开一点"浮起"的纵深感。
+            .shadow(color: .black.opacity(0.35), radius: isExpanded ? 30 : 16, y: isExpanded ? 12 : 8)
 
             // 模糊交叉淡化：旧内容快速虚化退场，新内容稍晚入场——内容切换不和形变同帧硬切。
             if isExpanded {

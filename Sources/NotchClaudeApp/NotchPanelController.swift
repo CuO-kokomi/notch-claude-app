@@ -126,6 +126,21 @@ final class NotchPanelController: NSObject {
         context1MItem.state = UserDefaults.standard.bool(forKey: ClaudeStatusProvider.context1MKey) ? .on : .off
         menu.addItem(context1MItem)
         menu.addItem(.separator())
+
+        // 展开态玻璃质感：暗色玻璃 / 明亮 Liquid Glass 切换。
+        let glassParent = NSMenuItem(title: "展开玻璃质感", action: nil, keyEquivalent: "")
+        let glassSub = NSMenu()
+        let current = GlassStyle.current
+        for (style, title) in [(GlassStyle.deep, "厚玻璃"), (GlassStyle.sheer, "薄玻璃")] {
+            let item = NSMenuItem(title: title, action: #selector(selectGlassStyle(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = style.rawValue
+            item.state = current == style ? .on : .off
+            glassSub.addItem(item)
+        }
+        glassParent.submenu = glassSub
+        menu.addItem(glassParent)
+        menu.addItem(.separator())
         let aboutItem = NSMenuItem(title: "关于灵动岛", action: #selector(showAbout), keyEquivalent: "")
         aboutItem.target = self
         menu.addItem(aboutItem)
@@ -187,6 +202,12 @@ final class NotchPanelController: NSObject {
     @objc private func toggleContext1M() {
         let key = ClaudeStatusProvider.context1MKey
         UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: key), forKey: key)
+        (panel.contentView as? NotchHostingView)?.menu = contextMenu()
+    }
+
+    @objc private func selectGlassStyle(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(raw, forKey: GlassStyle.key)
         (panel.contentView as? NotchHostingView)?.menu = contextMenu()
     }
 
