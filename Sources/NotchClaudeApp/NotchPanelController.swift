@@ -2,12 +2,16 @@ import AppKit
 import SwiftUI
 
 final class NotchPanelController: NSObject {
-    // 收起态窗口固定按最大探出高度（42 主行 + 2×26 探出行）开窗，下方留透明区；
-    // 探出/收回是纯 SwiftUI 内部动画，绝不在内容动画期间 setFrame——
-    // 那会和 NSHostingView 的约束更新互相重入，直接崩溃。
-    private let collapsedSize = NSSize(width: 260, height: 94)
+    // 窗口常驻最大展开尺寸，多余部分透明（鼠标监视器负责点击穿透）；
+    // 收起/展开/探出全部是岛体的纯 SwiftUI 形变动画，交互期间绝不 setFrame——
+    // 窗口动画会和 NSHostingView 的约束更新互相重入直接崩溃，也无法与内容弹簧同步。
+    private let collapsedIslandWidth: CGFloat = 260
+    // 回弹余量：展开弹簧有 ~4% 过冲，窗口比岛体目标大一圈，避免过冲瞬间被窗口边界切平。
+    // 必须与 NotchPanelView 的 overshootMarginH/B 保持一致。
+    static let overshootMarginH: CGFloat = 24
+    static let overshootMarginB: CGFloat = 16
     private var expandedSize: NSSize {
-        NSSize(width: expandedWidth, height: 188)
+        NSSize(width: expandedWidth + Self.overshootMarginH * 2, height: 188 + Self.overshootMarginB)
     }
     private var expandedWidth: CGFloat = 720
     private var isInAddMode = false
@@ -56,13 +60,13 @@ final class NotchPanelController: NSObject {
     }
 
     func show() {
-        position(size: collapsedSize)
+        position(size: expandedSize)
         panel.orderFrontRegardless()
     }
 
     private func createPanel() {
         panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: collapsedSize),
+            contentRect: NSRect(origin: .zero, size: expandedSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -158,7 +162,7 @@ final class NotchPanelController: NSObject {
 
     @objc private func toggleFlushToTop() {
         UserDefaults.standard.set(!flushToTop, forKey: "flushToTop")
-        position(size: isExpanded ? expandedSize : collapsedSize)
+        position(size: expandedSize)
         (panel.contentView as? NotchHostingView)?.menu = contextMenu()
     }
 
@@ -286,18 +290,15 @@ final class NotchPanelController: NSObject {
     }
 
     private func resize(expanded: Bool) {
-        // 避免 hover 导致重复 resize，引发展开/收起抖动循环。
+        // 窗口不动，只记录状态供鼠标交互区域计算；形变动画全在 SwiftUI 内部。
         guard expanded != isExpanded else { return }
         isExpanded = expanded
-        let targetSize = expanded ? expandedSize : collapsedSize
-        let frame = frameFor(size: targetSize)
-        panel.setFrame(frame, display: true, animate: true)
         updateMouseIgnoring()
     }
 
     // MARK: - 透明死区点击穿透
 
-    // 收起态窗口固定 94 高，下方透明区会吞掉点击（macOS 不会自动按像素透明度穿透）。
+    // 窗口常驻最大尺寸，岛体以外的透明区会吞掉点击（macOS 不会自动按像素透明度穿透）。
     // 全局+本地鼠标监视：鼠标不在可见岛体上时让整个窗口忽略鼠标事件。
     private func installMouseMonitors() {
         let global = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved], handler: { [weak self] _ in
@@ -311,18 +312,24 @@ final class NotchPanelController: NSObject {
     }
 
     private func updateMouseIgnoring() {
-        // 展开态窗口就是岛体本身，没有死区。
-        guard !isExpanded else {
-            if panel.ignoresMouseEvents { panel.ignoresMouseEvents = false }
-            return
-        }
         let frame = panel.frame
-        let interactive = NSRect(
-            x: frame.minX,
-            y: frame.maxY - visibleCollapsedHeight,
-            width: frame.width,
-            height: visibleCollapsedHeight
-        )
+        // 展开态岛体 = 窗口减去回弹余量；收起态是顶部居中的 260 宽条（高度含探出行）。
+        let interactive: NSRect
+        if isExpanded {
+            interactive = NSRect(
+                x: frame.minX + Self.overshootMarginH,
+                y: frame.minY + Self.overshootMarginB,
+                width: frame.width - Self.overshootMarginH * 2,
+                height: frame.height - Self.overshootMarginB
+            )
+        } else {
+            interactive = NSRect(
+                x: frame.midX - collapsedIslandWidth / 2,
+                y: frame.maxY - visibleCollapsedHeight,
+                width: collapsedIslandWidth,
+                height: visibleCollapsedHeight
+            )
+        }
         let inside = interactive.contains(NSEvent.mouseLocation)
         if panel.ignoresMouseEvents == inside {
             panel.ignoresMouseEvents = !inside
@@ -347,7 +354,7 @@ final class NotchPanelController: NSObject {
     }
 
     @objc private func screenParametersChanged() {
-        position(size: isExpanded ? expandedSize : collapsedSize)
+        position(size: expandedSize)
     }
 
     private func updateExpandedWidth(for count: Int) {
@@ -355,10 +362,7 @@ final class NotchPanelController: NSObject {
         let newWidth = Self.calculateWidth(for: count)
         guard newWidth != expandedWidth else { return }
         expandedWidth = newWidth
-        if isExpanded {
-            let frame = frameFor(size: expandedSize)
-            panel.setFrame(frame, display: true, animate: true)
-        }
+        applyExpandedWidth()
     }
 
     private func handleAddModeChange(_ inAddMode: Bool) {
@@ -366,10 +370,13 @@ final class NotchPanelController: NSObject {
         let targetWidth = inAddMode ? Self.calculateWidth(for: 3) : Self.calculateWidth(for: UserDefaults.standard.stringArray(forKey: "activeWidgetIDs")?.count ?? 4)
         guard targetWidth != expandedWidth else { return }
         expandedWidth = targetWidth
-        if isExpanded {
-            let frame = frameFor(size: expandedSize)
-            panel.setFrame(frame, display: true, animate: true)
-        }
+        applyExpandedWidth()
+    }
+
+    // 窗口宽度跟随最大展开宽度；收起态（不可见）瞬切，展开态保留动画。
+    private func applyExpandedWidth() {
+        let frame = frameFor(size: expandedSize)
+        panel.setFrame(frame, display: true, animate: isExpanded)
     }
 
     private static func calculateWidth(for widgetCount: Int) -> CGFloat {

@@ -24,6 +24,9 @@ final class PermissionServer: ObservableObject {
     // 必须与 install-claude-hooks.sh 写入 settings.json 的 PERMISSION_URL 端口一致。
     nonisolated static let port: UInt16 = 23889
 
+    // 让用户做多选/选项的工具：刘海的允许/拒绝二元按钮表达不了，交回终端选项菜单。
+    nonisolated static let choiceTools: Set<String> = ["AskUserQuestion"]
+
     // 待审批请求，按到达顺序排队；UI 显示第一个。
     @Published private(set) var pending: [PermissionRequest] = []
     // 新请求到达回调（用于发系统通知）。
@@ -96,6 +99,12 @@ final class PermissionServer: ObservableObject {
         guard let payload = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
               let toolName = payload["tool_name"] as? String else {
             // 看不懂的请求体：回 204 让 Claude Code 走自己的确认流程。
+            Self.send(conn, status: "204 No Content", body: Data())
+            return
+        }
+        // 选择题类工具（AskUserQuestion 让用户选选项，不是同意/拒绝）不适合刘海的二元按钮，
+        // 直接回 204 让 Claude Code 用终端的选项菜单处理。
+        if Self.choiceTools.contains(toolName) {
             Self.send(conn, status: "204 No Content", body: Data())
             return
         }

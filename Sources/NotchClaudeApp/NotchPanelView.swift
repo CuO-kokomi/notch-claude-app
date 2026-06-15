@@ -34,19 +34,19 @@ struct NotchPanelView: View {
     }
 
     var body: some View {
-        // 收起态窗口比可见岛体高（下方透明区留给探出行），岛体顶部对齐、
-        // 高度由 peekLineCount 驱动纯 SwiftUI 动画——窗口在探出期间绝不 setFrame。
-        Group {
-            if isExpanded {
-                island
-            } else {
-                VStack(spacing: 0) {
-                    island.frame(height: collapsedVisibleHeight)
-                    Spacer(minLength: 0)
-                }
-            }
+        // 窗口常驻最大尺寸，岛体是其中一块顶部居中的形变容器：
+        // 收起 260×(42+探出)、展开充满窗口，同一个视图身份 + 同一条弹簧驱动整个 morph，
+        // 才能做出原生灵动岛那种连续橡皮感（窗口在交互期间绝不 setFrame）。
+        GeometryReader { geo in
+            // 展开目标 = 窗口减去回弹余量（与 NotchPanelController.overshootMargin* 一致），
+            // 弹簧过冲时岛体仍在窗口内，不会被边界切平。
+            island
+                .frame(
+                    width: isExpanded ? geo.size.width - NotchPanelController.overshootMarginH * 2 : 260,
+                    height: isExpanded ? geo.size.height - NotchPanelController.overshootMarginB : collapsedVisibleHeight
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onReceive(widgetEnv.claudeStatus.events) { event in
             handleClaudeEvent(event)
         }
@@ -78,8 +78,16 @@ struct NotchPanelView: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: peekLineCount)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: isExpanded)
+        // 不对称弹簧：展开带一点回弹（原生岛的橡皮感来源），收起干脆利落。
+        .animation(expandAnimation, value: isExpanded)
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: flushToTop)
+    }
+
+    private var expandAnimation: Animation {
+        if reduceMotion { return .easeInOut(duration: 0.25) }
+        return isExpanded
+            ? .spring(response: 0.42, dampingFraction: 0.72)
+            : .spring(response: 0.32, dampingFraction: 0.85)
     }
 
     // 与旧窗口尺寸一致：主行 42 + 探出行各 26。
@@ -95,14 +103,25 @@ struct NotchPanelView: View {
                     panelShape
                         .stroke(.white.opacity(0.10), lineWidth: 1)
                 )
-                .shadow(color: .black.opacity(0.35), radius: 22, y: 10)
+                // 阴影跟随同一条弹簧加深，给展开一点"浮起"的纵深感。
+                .shadow(color: .black.opacity(0.35), radius: isExpanded ? 30 : 16, y: isExpanded ? 12 : 8)
 
+            // 模糊交叉淡化：旧内容快速虚化退场，新内容稍晚入场——内容切换不和形变同帧硬切。
             if isExpanded {
                 expandedContent
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .transition(.asymmetric(
+                        insertion: AnyTransition.blurFade
+                            .combined(with: .scale(scale: 0.88))
+                            .animation(.spring(response: 0.40, dampingFraction: 0.75).delay(0.06)),
+                        removal: AnyTransition.blurFade.animation(.easeOut(duration: 0.10))
+                    ))
             } else {
                 collapsedContent
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .transition(.asymmetric(
+                        insertion: AnyTransition.blurFade
+                            .animation(.easeOut(duration: 0.16).delay(0.08)),
+                        removal: AnyTransition.blurFade.animation(.easeOut(duration: 0.10))
+                    ))
             }
         }
         .clipShape(panelShape)
@@ -358,7 +377,9 @@ struct NotchPanelView: View {
     private var expandedContent: some View {
         ZStack {
             if isAddMode {
+                // 顶部对齐：可添加项多时网格会变高，居中会把表头（打勾按钮）顶出可点区域。
                 WidgetAddView(config: widgetConfig, isAddMode: $isAddMode)
+                    .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 WidgetDragContainer(
                     config: widgetConfig,
@@ -574,9 +595,34 @@ struct WidgetDragContainer: View {
     }
 }
 
+// 旧内容虚化退场 / 新内容清晰入场的交叉淡化（模仿原生灵动岛的内容切换）。
+private struct BlurFadeModifier: ViewModifier {
+    let radius: CGFloat
+    let opacity: Double
+
+    func body(content: Content) -> some View {
+        content.blur(radius: radius).opacity(opacity)
+    }
+}
+
+extension AnyTransition {
+    static var blurFade: AnyTransition {
+        .modifier(
+            active: BlurFadeModifier(radius: 8, opacity: 0),
+            identity: BlurFadeModifier(radius: 0, opacity: 1)
+        )
+    }
+}
+
 private struct PanelShape: Shape {
     let squareTopCorners: Bool
-    let cornerRadius: CGFloat
+    var cornerRadius: CGFloat
+
+    // 圆角参与形变动画（21 ↔ 34 连续过渡），否则轮廓在 morph 中途跳变。
+    var animatableData: CGFloat {
+        get { cornerRadius }
+        set { cornerRadius = newValue }
+    }
 
     func path(in rect: CGRect) -> Path {
         if squareTopCorners {
