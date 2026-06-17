@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct NotchPanelView: View {
     @State private var isExpanded = false
@@ -24,6 +25,8 @@ struct NotchPanelView: View {
     let onExpandedChanged: (Bool) -> Void
     let onWidgetCountChanged: (Int) -> Void
     let onAddModeChanged: (Bool) -> Void
+    // 控制器用精确岛体矩形判定的悬停（替代 SwiftUI onHover，死区不误展开）。
+    let hoverInside: AnyPublisher<Bool, Never>
     // 回传探出行数给控制器算交互区域（纯数据，控制器不得借此 setFrame）。
     let onPeekChanged: (Int) -> Void
 
@@ -51,6 +54,14 @@ struct NotchPanelView: View {
         }
         .onReceive(widgetEnv.claudeStatus.events) { event in
             handleClaudeEvent(event)
+        }
+        .onReceive(hoverInside) { inside in
+            if inside {
+                // 收起态显示权限审批按钮时不展开（保留收起态的 ✓/✗ 直接操作）。
+                if isExpanded || widgetEnv.permissions.pending.isEmpty { expand() }
+            } else {
+                scheduleCollapse()
+            }
         }
         .onChange(of: widgetConfig.widgetCount) { newCount in
             onWidgetCountChanged(newCount)
@@ -135,15 +146,7 @@ struct NotchPanelView: View {
         .overlay(completionGlow)
         // 裁剪外层圆角，避免展开内容轻微溢出破坏灵动岛轮廓。
         .padding(1)
-        // 悬停只在可见岛体上生效，收起态下方透明区不触发展开。
-        .onHover { hovering in
-            if hovering {
-                // 收起态显示权限审批按钮时暂停悬停展开，否则鼠标刚靠近按钮面板就变形了。
-                if isExpanded || widgetEnv.permissions.pending.isEmpty { expand() }
-            } else {
-                scheduleCollapse()
-            }
-        }
+        // 悬停判定改由控制器（hoverInside 发布者）用精确岛体矩形驱动，这里不再用 onHover。
     }
 
     private var collapsedContent: some View {

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 final class NotchPanelController: NSObject {
     // 窗口常驻最大展开尺寸，多余部分透明（鼠标监视器负责点击穿透）；
@@ -28,6 +29,9 @@ final class NotchPanelController: NSObject {
     // 收起态可见岛体高度（42 + 探出行×26），由视图回传；窗口其余部分是透明死区。
     private var visibleCollapsedHeight: CGFloat = 42
     private var mouseMonitors: [Any] = []
+    // 鼠标是否落在当前可见岛体矩形内——驱动展开/收起。比 SwiftUI onHover 精确，
+    // 死区（透明窗口的展开区范围）永远判 false，不会误展开。
+    private let hoverInside = CurrentValueSubject<Bool, Never>(false)
 
     override init() {
         super.init()
@@ -43,6 +47,7 @@ final class NotchPanelController: NSObject {
             onAddModeChanged: { [weak self] inAddMode in
                 self?.handleAddModeChange(inAddMode)
             },
+            hoverInside: hoverInside.eraseToAnyPublisher(),
             onPeekChanged: { [weak self] lines in
                 // 仅更新交互区域高度，绝不在这里 setFrame。
                 self?.visibleCollapsedHeight = 42 + CGFloat(lines) * 26
@@ -354,6 +359,10 @@ final class NotchPanelController: NSObject {
         let inside = interactive.contains(NSEvent.mouseLocation)
         if panel.ignoresMouseEvents == inside {
             panel.ignoresMouseEvents = !inside
+        }
+        // 同一份精确判定驱动展开/收起（替代 SwiftUI onHover，杜绝死区误展开）。
+        if hoverInside.value != inside {
+            hoverInside.send(inside)
         }
     }
 
