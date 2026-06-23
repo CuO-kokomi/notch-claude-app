@@ -4,16 +4,7 @@
 
 v4.0 做到了"走开即用"，v5.0 把它推到能真正托管多个并行 Claude Code 会话——人离开电脑，哪个会话要权限就在刘海上点一下，真正完成了才庆祝，回来一眼看到结果。同时展开态换上了 macOS 原生玻璃质感。
 
-<!-- 截图占位：放到 record/ 下同名文件
-  record/v5-glass.png        展开态玻璃质感（厚玻璃 / 多组件卡片）
-  record/v5-permission.png   收起态橙色权限条：左绿勾允许、右红叉拒绝、中间工具+命令
-  record/v5-sessions.png     展开态 Claude 卡片的多会话行列表 + ×N 角标
-  record/v5-result.png       完成后展开态显示最后回复摘要 + 上下文百分比
--->
-
-| 玻璃质感 | 刘海审批 | 多会话 | 结果摘要 |
-|----------|----------|--------|----------|
-| ![玻璃](record/v5-glass.png) | ![审批](record/v5-permission.png) | ![多会话](record/v5-sessions.png) | ![结果](record/v5-result.png) |
+> 玻璃质感 / 刘海审批 / 多会话 / 结果摘要等效果截图见仓库 [README](README.md)。
 
 ## 新特性
 
