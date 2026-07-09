@@ -16,6 +16,7 @@ final class NotchPanelController: NSObject {
     }
     private var expandedWidth: CGFloat = 720
     private var isInAddMode = false
+    private var isInSessionMode = false
     private var panel: NSPanel!
     private var rootView: NotchPanelView!
     private var isExpanded = false
@@ -47,6 +48,9 @@ final class NotchPanelController: NSObject {
             onAddModeChanged: { [weak self] inAddMode in
                 self?.handleAddModeChange(inAddMode)
             },
+            onSessionModeChanged: { [weak self] inSessionMode in
+                self?.handleSessionModeChange(inSessionMode)
+            },
             hoverInside: hoverInside.eraseToAnyPublisher(),
             onPeekChanged: { [weak self] lines in
                 // 仅更新交互区域高度，绝不在这里 setFrame。
@@ -70,7 +74,7 @@ final class NotchPanelController: NSObject {
     }
 
     private func createPanel() {
-        panel = NSPanel(
+        panel = KeyablePanel(
             contentRect: NSRect(origin: .zero, size: expandedSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -90,6 +94,14 @@ final class NotchPanelController: NSObject {
         hostingView.sizingOptions = []
         hostingView.menu = contextMenu()
         panel.contentView = hostingView
+    }
+
+    // 非激活面板默认不能成为 key window；会话管理模式需要键盘（搜索框），
+    // 用开关门控：只在该模式下允许成 key（Spotlight 式，成 key 但不激活 app），
+    // 平时点组件按钮不抢用户当前 app 的键盘焦点。
+    private final class KeyablePanel: NSPanel {
+        var allowsKeyFocus = false
+        override var canBecomeKey: Bool { allowsKeyFocus }
     }
 
     private final class NotchHostingView: NSHostingView<NotchPanelView> {
@@ -145,6 +157,23 @@ final class NotchPanelController: NSObject {
         }
         glassParent.submenu = glassSub
         menu.addItem(glassParent)
+
+        // 会话 resume 用哪个终端：只列已安装且 AppleScript 兼容 do script 的。
+        let terminals = SessionHistoryProvider.availableTerminals()
+        if terminals.count > 1 {
+            let termParent = NSMenuItem(title: "会话打开终端", action: nil, keyEquivalent: "")
+            let termSub = NSMenu()
+            let preferred = SessionHistoryProvider.preferredTerminal
+            for app in terminals {
+                let item = NSMenuItem(title: app.displayName, action: #selector(selectResumeTerminal(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = app.rawValue
+                item.state = preferred == app ? .on : .off
+                termSub.addItem(item)
+            }
+            termParent.submenu = termSub
+            menu.addItem(termParent)
+        }
         menu.addItem(.separator())
         let aboutItem = NSMenuItem(title: "关于灵动岛", action: #selector(showAbout), keyEquivalent: "")
         aboutItem.target = self
@@ -207,6 +236,12 @@ final class NotchPanelController: NSObject {
     @objc private func toggleContext1M() {
         let key = ClaudeStatusProvider.context1MKey
         UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: key), forKey: key)
+        (panel.contentView as? NotchHostingView)?.menu = contextMenu()
+    }
+
+    @objc private func selectResumeTerminal(_ sender: NSMenuItem) {
+        guard let app = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(app, forKey: SessionHistoryProvider.terminalAppKey)
         (panel.contentView as? NotchHostingView)?.menu = contextMenu()
     }
 
@@ -388,7 +423,7 @@ final class NotchPanelController: NSObject {
     }
 
     private func updateExpandedWidth(for count: Int) {
-        guard !isInAddMode else { return }
+        guard !isInAddMode && !isInSessionMode else { return }
         let newWidth = Self.calculateWidth(for: count)
         guard newWidth != expandedWidth else { return }
         expandedWidth = newWidth
@@ -401,6 +436,39 @@ final class NotchPanelController: NSObject {
         guard targetWidth != expandedWidth else { return }
         expandedWidth = targetWidth
         applyExpandedWidth()
+    }
+
+    private func handleSessionModeChange(_ inSessionMode: Bool) {
+        isInSessionMode = inSessionMode
+        // 宽度钉到 5 格：分组列表 + 搜索框需要横向空间。
+        let targetWidth = inSessionMode
+            ? Self.calculateWidth(for: 5)
+            : Self.calculateWidth(for: UserDefaults.standard.stringArray(forKey: "activeWidgetIDs")?.count ?? 4)
+        if targetWidth != expandedWidth {
+            expandedWidth = targetWidth
+            applyExpandedWidth()
+        }
+
+        guard let keyable = panel as? KeyablePanel else { return }
+        if inSessionMode {
+            keyable.allowsKeyFocus = true
+            // 下一 runloop 再 makeKey，避开 SwiftUI onChange 派发中改窗口状态。
+            DispatchQueue.main.async { [weak self] in
+                self?.panel.makeKey()
+            }
+        } else {
+            let wasKey = keyable.isKeyWindow
+            keyable.allowsKeyFocus = false
+            keyable.makeFirstResponder(nil)
+            // 面板不会消失，key 状态不会自动归还：显式把键盘交回用户之前的 app
+            //（我们是 accessory 且从未 activate，frontmost 仍是用户原 app）。
+            // 若实测归还不干净，备案：panel.orderOut(nil); panel.orderFrontRegardless()。
+            if wasKey,
+               let front = NSWorkspace.shared.frontmostApplication,
+               front.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                front.activate(options: [])
+            }
+        }
     }
 
     // 窗口宽度跟随最大展开宽度；收起态（不可见）瞬切，展开态保留动画。

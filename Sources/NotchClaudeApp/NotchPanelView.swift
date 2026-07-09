@@ -4,6 +4,7 @@ import Combine
 struct NotchPanelView: View {
     @State private var isExpanded = false
     @State private var isAddMode = false
+    @State private var isSessionMode = false
     @State private var isLocked = false
     @State private var isDraggingWidget = false
     @State private var collapseTask: DispatchWorkItem?
@@ -25,6 +26,7 @@ struct NotchPanelView: View {
     let onExpandedChanged: (Bool) -> Void
     let onWidgetCountChanged: (Int) -> Void
     let onAddModeChanged: (Bool) -> Void
+    let onSessionModeChanged: (Bool) -> Void
     // 控制器用精确岛体矩形判定的悬停（替代 SwiftUI onHover，死区不误展开）。
     let hoverInside: AnyPublisher<Bool, Never>
     // 回传探出行数给控制器算交互区域（纯数据，控制器不得借此 setFrame）。
@@ -68,6 +70,15 @@ struct NotchPanelView: View {
         }
         .onChange(of: isAddMode) { newValue in
             onAddModeChanged(newValue)
+        }
+        .onChange(of: isSessionMode) { newValue in
+            onSessionModeChanged(newValue)
+        }
+        // 会话小组件的「管理全部」按钮：切到会话管理模式（与加号模式互斥）。
+        .onReceive(NotificationCenter.default.publisher(for: .notchOpenSessionManager)) { _ in
+            guard isExpanded else { return }
+            isAddMode = false
+            isSessionMode = true
         }
         // 贴顶模式：状态/工具/目标文字变化时探出一行提醒（耗时秒数跳动不触发）。
         .onChange(of: peekTriggerKey) { _ in
@@ -389,6 +400,9 @@ struct NotchPanelView: View {
                 // 顶部对齐：可添加项多时网格会变高，居中会把表头（打勾按钮）顶出可点区域。
                 WidgetAddView(config: widgetConfig, isAddMode: $isAddMode)
                     .frame(maxHeight: .infinity, alignment: .top)
+            } else if isSessionMode {
+                SessionManagerView(provider: widgetEnv.sessionHistory, isSessionMode: $isSessionMode)
+                    .frame(maxHeight: .infinity, alignment: .top)
             } else {
                 WidgetDragContainer(
                     config: widgetConfig,
@@ -400,7 +414,7 @@ struct NotchPanelView: View {
                 .padding(.vertical, 10)
             }
 
-            if !isAddMode {
+            if !isAddMode && !isSessionMode {
                 VStack {
                     Spacer()
                     HStack {
@@ -451,7 +465,8 @@ struct NotchPanelView: View {
     }
 
     private func scheduleCollapse() {
-        guard !isAddMode && !isDraggingWidget && !isLocked else { return }
+        // 会话模式下面板常驻（搜索打字期间鼠标移出也不能塌缩）。
+        guard !isAddMode && !isSessionMode && !isDraggingWidget && !isLocked else { return }
         collapseTask?.cancel()
         let task = DispatchWorkItem {
             guard isExpanded else { return }

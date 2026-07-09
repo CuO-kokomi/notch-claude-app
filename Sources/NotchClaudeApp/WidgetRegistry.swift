@@ -81,6 +81,12 @@ enum WidgetRegistry {
             viewBuilder: { env, align in AnyView(VolumeWidget(volumeProvider: env.volume, titleAlignment: align)) }
         ),
         WidgetDescriptor(
+            id: "session_history",
+            displayName: "会话",
+            iconName: "clock.arrow.circlepath",
+            viewBuilder: { env, align in AnyView(SessionHistoryWidget(history: env.sessionHistory, titleAlignment: align)) }
+        ),
+        WidgetDescriptor(
             id: "quick_launch",
             displayName: "快捷启动",
             iconName: "square.grid.2x2",

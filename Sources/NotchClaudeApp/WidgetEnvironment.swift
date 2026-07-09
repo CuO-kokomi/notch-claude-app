@@ -17,6 +17,7 @@ final class WidgetEnvironment: ObservableObject {
     lazy var clipboard = ClipboardProvider()
     lazy var pomodoro = PomodoroProvider()
     lazy var volume = VolumeProvider()
+    lazy var sessionHistory = SessionHistoryProvider()
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -48,5 +49,6 @@ final class WidgetEnvironment: ObservableObject {
         _ = clipboard
         _ = pomodoro
         _ = volume
+        _ = sessionHistory
     }
 }

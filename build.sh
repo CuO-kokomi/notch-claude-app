@@ -57,15 +57,15 @@ cat > NotchClaudeApp.app/Contents/Info.plist << 'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>5.0</string>
+    <string>6.0</string>
     <key>CFBundleVersion</key>
-    <string>4</string>
+    <string>5</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>灵动岛需要控制音乐播放器以显示当前播放信息</string>
+    <string>灵动岛需要控制音乐播放器以显示当前播放信息，并打开终端恢复 Claude 会话</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

@@ -35,10 +35,12 @@ struct CalendarWidget: View {
         WidgetCard(title: monthTitle, titleAlignment: titleAlignment) {
             VStack(spacing: 5) {
                 HStack(spacing: 0) {
-                    ForEach(weekdays, id: \.self) { weekday in
+                    let todayColumn = calendar.component(.weekday, from: Date()) - 1
+                    ForEach(Array(weekdays.enumerated()), id: \.offset) { index, weekday in
                         Text(weekday)
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.46))
+                            // 今天所在列与今日圆点同色呼应。
+                            .foregroundStyle(index == todayColumn ? Color.orange.opacity(0.9) : .white.opacity(0.46))
                             .frame(maxWidth: .infinity)
                     }
                 }
@@ -84,7 +86,7 @@ struct TimerWidget: View {
                 .frame(maxWidth: .infinity)
 
                 HStack(alignment: .center, spacing: 2) {
-                    TimeUnitControl(value: timerModel.minutesText, label: "分") {
+                    TimeUnitControl(value: timerModel.minutesText, label: "分", active: timerModel.isRunning) {
                         timerModel.adjustMinutes(1)
                     } decrement: {
                         timerModel.adjustMinutes(-1)
@@ -92,11 +94,11 @@ struct TimerWidget: View {
 
                     Text(":")
                         .font(.system(size: 24, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(timerModel.isRunning ? Color.mint.opacity(0.85) : .white.opacity(0.72))
                         .frame(width: 10)
                         .offset(y: -1)
 
-                    TimeUnitControl(value: timerModel.secondsText, label: "秒") {
+                    TimeUnitControl(value: timerModel.secondsText, label: "秒", active: timerModel.isRunning) {
                         timerModel.adjustSeconds(1)
                     } decrement: {
                         timerModel.adjustSeconds(-1)
@@ -105,7 +107,10 @@ struct TimerWidget: View {
                 .frame(maxWidth: .infinity)
 
                 HStack(spacing: 10) {
-                    TimerActionButton(title: timerModel.isRunning ? "暂停" : "开始") {
+                    TimerActionButton(
+                        title: timerModel.isRunning ? "暂停" : "开始",
+                        tint: timerModel.isRunning ? .orange : .mint
+                    ) {
                         timerModel.toggle()
                     }
                     TimerActionButton(title: "重置") {
@@ -120,21 +125,23 @@ struct TimerWidget: View {
 
 private struct TimerActionButton: View {
     let title: String
+    // 主操作着色（开始=薄荷、暂停=橙），中性操作保持白。
+    var tint: Color? = nil
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.82))
+                .foregroundStyle(tint?.opacity(0.95) ?? .white.opacity(0.82))
                 .frame(width: 44, height: 22)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.white.opacity(0.07))
+                        .fill(tint?.opacity(0.13) ?? .white.opacity(0.07))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(.white.opacity(0.18), lineWidth: 1)
+                        .stroke(tint?.opacity(0.4) ?? .white.opacity(0.18), lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)
@@ -170,6 +177,7 @@ private struct QuickTimerButton: View {
 private struct TimeUnitControl: View {
     let value: String
     let label: String
+    var active: Bool = false
     let increment: () -> Void
     let decrement: () -> Void
 
@@ -180,7 +188,7 @@ private struct TimeUnitControl: View {
                 Text(value)
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white)
+                    .foregroundStyle(active ? Color.mint : .white)
                     .frame(width: 34)
                 Text(label)
                     .font(.system(size: 8, weight: .semibold))
@@ -246,10 +254,10 @@ struct SystemStatsWidget: View {
     var body: some View {
         WidgetCard(title: "系统", titleAlignment: titleAlignment) {
             LazyVGrid(columns: columns, spacing: 6) {
-                SystemMetricTile(systemName: "cpu", title: "CPU", value: systemStats.cpuText)
-                SystemMetricTile(systemName: "memorychip", title: "内存", value: systemStats.memoryText)
-                SystemMetricTile(systemName: "arrow.up", title: "上传", value: systemStats.uploadText)
-                SystemMetricTile(systemName: "arrow.down", title: "下载", value: systemStats.downloadText)
+                SystemMetricTile(systemName: "cpu", title: "CPU", value: systemStats.cpuText, tint: .blue)
+                SystemMetricTile(systemName: "memorychip", title: "内存", value: systemStats.memoryText, tint: .purple)
+                SystemMetricTile(systemName: "arrow.up", title: "上传", value: systemStats.uploadText, tint: .orange)
+                SystemMetricTile(systemName: "arrow.down", title: "下载", value: systemStats.downloadText, tint: .green)
             }
         }
     }
@@ -259,12 +267,14 @@ private struct SystemMetricTile: View {
     let systemName: String
     let title: String
     let value: String
+    // 语义色只点图标：数值保持白色，色彩做索引不做装饰。
+    var tint: Color = .white.opacity(0.72)
 
     var body: some View {
         VStack(spacing: 2) {
             Image(systemName: systemName)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.72))
+                .foregroundStyle(tint.opacity(0.85))
             Text(title)
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.48))

@@ -10,7 +10,8 @@ struct WeatherWidget: View {
                 Image(systemName: weather.iconName)
                     .font(.system(size: 28, weight: .medium))
                     .foregroundStyle(.white.opacity(0.82))
-                    .symbolRenderingMode(.hierarchical)
+                    // 天气符号用系统多色（太阳黄、雨滴蓝），无多色变体的自动回退白色。
+                    .symbolRenderingMode(.multicolor)
                 Text(weather.temperature)
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
@@ -81,6 +82,12 @@ struct MusicWidget: View {
     @ObservedObject var music: MusicProvider
     var titleAlignment: Alignment = .leading
 
+    private var playerTint: Color {
+        music.playerName == "Spotify"
+            ? Color(red: 0.11, green: 0.84, blue: 0.38)
+            : Color(red: 0.98, green: 0.27, blue: 0.35)
+    }
+
     var body: some View {
         WidgetCard(title: music.playerName.isEmpty ? "音乐" : music.playerName, titleAlignment: titleAlignment) {
             VStack(spacing: 12) {
@@ -105,18 +112,21 @@ struct MusicWidget: View {
                         Button(action: { music.previousTrack() }) {
                             Image(systemName: "backward.fill")
                                 .font(.system(size: 16))
+                                .foregroundStyle(.white.opacity(0.72))
                         }
                         Button(action: { music.togglePlayPause() }) {
                             Image(systemName: music.isPlaying ? "pause.fill" : "play.fill")
                                 .font(.system(size: 22))
+                                // 播放键带播放器品牌色：Spotify 绿 / Apple Music 红粉。
+                                .foregroundStyle(music.isPlaying ? playerTint : .white.opacity(0.85))
                         }
                         Button(action: { music.nextTrack() }) {
                             Image(systemName: "forward.fill")
                                 .font(.system(size: 16))
+                                .foregroundStyle(.white.opacity(0.72))
                         }
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.72))
                 }
             }
             .frame(maxWidth: .infinity)
@@ -161,11 +171,13 @@ struct GitStatusWidget: View {
                     HStack(spacing: 5) {
                         Image(systemName: "arrow.triangle.branch")
                             .font(.system(size: 13, weight: .semibold))
+                            // Git 品牌橙：只点图标，分支名保持白色可读。
+                            .foregroundStyle(Color(red: 0.94, green: 0.32, blue: 0.2))
                         Text(git.branch)
                             .font(.system(size: 14, weight: .bold, design: .monospaced))
                             .lineLimit(1)
+                            .foregroundStyle(.white.opacity(0.82))
                     }
-                    .foregroundStyle(.white.opacity(0.82))
 
                     HStack(spacing: 5) {
                         Circle()
@@ -229,7 +241,7 @@ struct PortMonitorWidget: View {
                             Circle().fill(.green).frame(width: 6, height: 6)
                             Text(":\(port.port)")
                                 .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.82))
+                                .foregroundStyle(.cyan.opacity(0.85))
                             Text(port.process)
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundStyle(.white.opacity(0.48))
@@ -264,7 +276,8 @@ struct DockerWidget: View {
                     HStack(spacing: 5) {
                         Image(systemName: "shippingbox.fill")
                             .font(.system(size: 12))
-                            .foregroundStyle(.green)
+                            // Docker 品牌蓝；运行状态由行内绿点表达，不重复用绿。
+                            .foregroundStyle(Color(red: 0.14, green: 0.59, blue: 0.93))
                         Text("\(running) 运行中")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.72))
@@ -354,7 +367,8 @@ struct PomodoroWidget: View {
                 Text(pomodoro.formattedTime)
                     .font(.system(size: 28, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.white)
+                    // 计时进行中数字跟随相位色（专注红 / 休息绿蓝），空闲保持白。
+                    .foregroundStyle(pomodoro.phase == .idle ? .white : phaseColor)
 
                 Text(pomodoro.phase.rawValue)
                     .font(.system(size: 11, weight: .semibold))
@@ -430,11 +444,11 @@ struct VolumeWidget: View {
 struct QuickLaunchWidget: View {
     var titleAlignment: Alignment = .leading
 
-    private let apps: [(name: String, icon: String, path: String)] = [
-        ("终端", "terminal.fill", "/System/Applications/Utilities/Terminal.app"),
-        ("浏览器", "globe", "default-browser"),
-        ("Finder", "folder.fill", "/System/Library/CoreServices/Finder.app"),
-        ("监视器", "gauge.medium", "/System/Applications/Utilities/Activity Monitor.app"),
+    private let apps: [(name: String, icon: String, path: String, tint: Color)] = [
+        ("终端", "terminal.fill", "/System/Applications/Utilities/Terminal.app", .green),
+        ("浏览器", "globe", "default-browser", .blue),
+        ("Finder", "folder.fill", "/System/Library/CoreServices/Finder.app", .cyan),
+        ("监视器", "gauge.medium", "/System/Applications/Utilities/Activity Monitor.app", .purple),
     ]
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 2)
@@ -455,7 +469,7 @@ struct QuickLaunchWidget: View {
                         VStack(spacing: 2) {
                             Image(systemName: app.icon)
                                 .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.72))
+                                .foregroundStyle(app.tint.opacity(0.85))
                             Text(app.name)
                                 .font(.system(size: 9, weight: .semibold))
                                 .foregroundStyle(.white.opacity(0.48))
@@ -470,5 +484,106 @@ struct QuickLaunchWidget: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - 会话（历史会话浏览 / resume）
+
+extension Notification.Name {
+    // 小组件「管理全部」→ 面板切换到会话管理模式。
+    static let notchOpenSessionManager = Notification.Name("notchOpenSessionManager")
+}
+
+struct SessionHistoryWidget: View {
+    @ObservedObject var history: SessionHistoryProvider
+    var titleAlignment: Alignment = .leading
+    @AppStorage(SessionHistoryProvider.skipPermissionsKey) private var skipPermissions = false
+    @State private var resumedID: String?
+    @State private var hoveredID: String?
+
+    var body: some View {
+        WidgetCard(title: "会话", titleAlignment: titleAlignment) {
+            if history.recentSessions.isEmpty {
+                VStack(spacing: 6) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 22))
+                        .foregroundStyle(.white.opacity(0.36))
+                    Text("暂无会话记录")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.42))
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                VStack(alignment: .leading, spacing: 5) {
+                    // 两行行样式配 2 条最近会话：呼吸感优先，全量走「管理全部」。
+                    ForEach(history.recentSessions.prefix(2)) { session in
+                        sessionRow(session)
+                    }
+                    Button(action: {
+                        NotificationCenter.default.post(name: .notchOpenSessionManager, object: nil)
+                    }) {
+                        HStack(spacing: 3) {
+                            Text("全部 \(history.totalCount) 个会话")
+                                .font(.system(size: 11, weight: .semibold))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .foregroundStyle(.white.opacity(hoveredID == "all" ? 0.85 : 0.56))
+                        .frame(maxWidth: .infinity, minHeight: 20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(.white.opacity(hoveredID == "all" ? 0.1 : 0.06))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hoveredID = $0 ? "all" : nil }
+                }
+                .animation(.easeOut(duration: 0.12), value: hoveredID)
+            }
+        }
+        .onAppear { history.refresh() }
+    }
+
+    private func sessionRow(_ session: SessionSummary) -> some View {
+        let color = SessionHistoryProvider.projectColor(session.cwd)
+        let resumed = resumedID == session.id
+        return Button(action: {
+            guard history.resume(session, skipPermissions: skipPermissions) else { return }
+            resumedID = session.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                if resumedID == session.id { resumedID = nil }
+            }
+        }) {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(resumed ? .green : SessionHistoryProvider.projectColor(session.cwd))
+                        .frame(width: 6, height: 6)
+                    Text((session.cwd as NSString).lastPathComponent)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(resumed ? .green : color)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(SessionHistoryProvider.timeAgo(session.mtime))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.42))
+                }
+                Text(resumed ? "已打开 ↗" : session.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(resumed ? .green : .white.opacity(0.78))
+                    .lineLimit(1)
+                    .padding(.leading, 11)
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(resumed ? .green.opacity(0.1)
+                          : .white.opacity(hoveredID == session.id ? 0.1 : 0.05))
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hoveredID = $0 ? session.id : nil }
     }
 }
