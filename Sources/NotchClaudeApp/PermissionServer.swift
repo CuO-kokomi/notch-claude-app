@@ -7,6 +7,8 @@ struct PermissionRequest: Identifiable {
     let toolName: String
     let detail: String?
     let receivedAt: Date
+    // 所属会话，用于识别"用户已在终端处理过"的过期请求。
+    let sessionId: String?
     // Claude Code 附带的"始终允许"规则建议（addRules），原样回传 updatedPermissions 即可生效。
     let alwaysAllowSuggestion: [String: Any]?
 }
@@ -115,6 +117,7 @@ final class PermissionServer: ObservableObject {
             toolName: toolName,
             detail: Self.extractDetail(toolName: toolName, input: input),
             receivedAt: Date(),
+            sessionId: payload["session_id"] as? String,
             alwaysAllowSuggestion: Self.extractAlwaysAllowSuggestion(payload)
         )
         connections[connID] = conn
@@ -141,6 +144,27 @@ final class PermissionServer: ObservableObject {
     private func drop(_ connID: UUID) {
         connections.removeValue(forKey: connID)
         pending.removeAll { $0.id == connID }
+    }
+
+    // 兜底撤卡：用户在终端先回答时，新版 Claude Code 不再断开挂起的 hook 连接
+    //（watchForClose 等不到关闭信号），但我们自己的状态 hook 会继续推进会话——
+    // 批准 → PreToolUse 写 running；拒绝 → 后续事件推进。只要请求所属会话的状态
+    // 在请求之后被更新、且不再是 allow，即视为已在别处处理，回 204 撤卡。
+    // 边界：同会话并行工具的 PreToolUse 也可能触发误撤，此时终端提示仍在，无害。
+    func dismissHandledElsewhere(sessions: [ClaudeSession]) {
+        guard !pending.isEmpty else { return }
+        for request in pending {
+            guard let sid = request.sessionId,
+                  let session = sessions.first(where: { $0.id == sid }),
+                  session.status != .allow,
+                  let updated = session.updatedAt,
+                  updated > request.receivedAt.addingTimeInterval(0.5) else { continue }
+            if let conn = connections.removeValue(forKey: request.id) {
+                // 204 = 无决定，Claude Code 若还在等会走自己的流程；已处理则忽略。
+                Self.send(conn, status: "204 No Content", body: Data())
+            }
+            pending.removeAll { $0.id == request.id }
+        }
     }
 
     // MARK: - 用户决定

@@ -31,6 +31,11 @@ final class WidgetEnvironment: ObservableObject {
         claudeStatus.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
+        // 会话状态每次刷新都对账一遍待审批请求：终端先回答的请求由状态推进兜底撤卡
+        //（新版 Claude Code 不再断开挂起的 hook 连接，等不到对端关闭信号）。
+        claudeStatus.$sessions.sink { [weak self] sessions in
+            self?.permissions.dismissHandledElsewhere(sessions: sessions)
+        }.store(in: &cancellables)
         permissions.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
