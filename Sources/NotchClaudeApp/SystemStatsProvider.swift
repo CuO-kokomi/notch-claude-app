@@ -11,6 +11,7 @@ final class SystemStatsProvider: ObservableObject {
 
     private var timer: Timer?
     private var previousNetworkSample: NetworkSample?
+    private var previousCPUTicks: [CPUTicks] = []
 
     init() {
         refresh()
@@ -22,13 +23,14 @@ final class SystemStatsProvider: ObservableObject {
     }
 
     private func refresh() {
-        cpuText = String(format: "%.0f%%", currentCPUUsage())
+        cpuText = currentCPUUsage().map { String(format: "%.0f%%", $0) } ?? "--"
         memoryText = currentMemoryText()
         refreshNetworkText()
     }
 
-    private func currentCPUUsage() -> Double {
-        // host_processor_info 返回的是启动以来累计 tick，这里只做轻量近似展示。
+    // host_processor_info 给的是开机以来的累计 tick，必须与上次采样做差值才是当前占用；
+    // 直接用累计值算出来的是"开机至今平均值"，几乎不随负载变化。首次采样先显示占位。
+    private func currentCPUUsage() -> Double? {
         var cpuInfo: processor_info_array_t?
         var cpuInfoCount: mach_msg_type_number_t = 0
         var processorCount: natural_t = 0
@@ -41,28 +43,40 @@ final class SystemStatsProvider: ObservableObject {
             &cpuInfoCount
         )
 
-        guard result == KERN_SUCCESS, let cpuInfo else { return 0 }
+        guard result == KERN_SUCCESS, let cpuInfo else { return nil }
         defer {
             let byteCount = vm_size_t(cpuInfoCount) * vm_size_t(MemoryLayout<integer_t>.stride)
             vm_deallocate(mach_task_self_, vm_address_t(bitPattern: cpuInfo), byteCount)
         }
 
-        var totalUsage = 0.0
         let cpuLoadInfoCount = Int(CPU_STATE_MAX)
-
+        var samples: [CPUTicks] = []
+        samples.reserveCapacity(Int(processorCount))
         for cpu in 0..<Int(processorCount) {
             let offset = cpu * cpuLoadInfoCount
             let user = Double(cpuInfo[offset + Int(CPU_STATE_USER)])
             let system = Double(cpuInfo[offset + Int(CPU_STATE_SYSTEM)])
             let nice = Double(cpuInfo[offset + Int(CPU_STATE_NICE)])
             let idle = Double(cpuInfo[offset + Int(CPU_STATE_IDLE)])
-            let total = user + system + nice + idle
-            if total > 0 {
-                totalUsage += ((total - idle) / total) * 100
-            }
+            samples.append(CPUTicks(used: user + system + nice, total: user + system + nice + idle))
         }
 
-        return processorCount == 0 ? 0 : totalUsage / Double(processorCount)
+        let previous = previousCPUTicks
+        previousCPUTicks = samples
+        // 首次采样，或核心数变化（E/P 核上下线）导致无法逐核对齐时，等下一轮。
+        guard previous.count == samples.count, !samples.isEmpty else { return nil }
+
+        var usageSum = 0.0
+        var counted = 0
+        for (index, sample) in samples.enumerated() {
+            let totalDelta = sample.total - previous[index].total
+            let usedDelta = sample.used - previous[index].used
+            guard totalDelta > 0 else { continue }  // 该核这段时间没跑（已下线）
+            usageSum += min(100, max(0, usedDelta / totalDelta * 100))
+            counted += 1
+        }
+        guard counted > 0 else { return nil }
+        return usageSum / Double(counted)
     }
 
     private func currentMemoryText() -> String {
@@ -144,6 +158,12 @@ final class SystemStatsProvider: ObservableObject {
         }
         return String(format: "%.0fK/s", bytesPerSecond / 1024)
     }
+}
+
+// 单个核心的累计 tick 快照：used = user+system+nice，total 含 idle。
+private struct CPUTicks {
+    let used: Double
+    let total: Double
 }
 
 private struct NetworkSample {
